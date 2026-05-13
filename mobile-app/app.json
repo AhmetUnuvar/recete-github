@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "Recete Mobile",
+    "slug": "recete-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "extra": {
+      "eas": {
+        "projectId": "7e736104-8a51-47f4-9904-43e91411ddbe"
+      }
+    },
+    "owner": "bahaunvr"
+  }
+}
