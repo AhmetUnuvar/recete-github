@@ -100,6 +100,6 @@ app.use(
   })
 );
 
-app.listen(port, () => {
-  console.log(`API Gateway running on ${port}`);
+app.listen(port, "0.0.0.0", () => {
+  console.log(`API Gateway listening on 0.0.0.0:${port}`);
 });

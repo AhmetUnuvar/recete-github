@@ -10,6 +10,21 @@
         "projectId": "7e736104-8a51-47f4-9904-43e91411ddbe"
       }
     },
-    "owner": "bahaunvr"
+    "owner": "bahaunvr",
+    "ios": {
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSExceptionDomains": {
+            "89.167.4.8": {
+              "NSExceptionAllowsInsecureHTTPLoads": true,
+              "NSIncludesSubdomains": false
+            }
+          }
+        }
+      }
+    },
+    "android": {
+      "usesCleartextTraffic": true
+    }
   }
 }
