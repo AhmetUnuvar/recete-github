@@ -1,0 +1,2 @@
+-- Optional init script for PostgreSQL container startup.
+-- Auth service creates/maintains users_db table on boot.

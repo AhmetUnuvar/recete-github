@@ -1,0 +1,234 @@
+services:
+  postgres:
+    image: postgres:16
+    command: [
+      "postgres",
+      "-c", "log_connections=on",
+      "-c", "log_disconnections=on",
+      "-c", "log_min_error_statement=error"
+    ]
+    container_name: recete-postgres
+    environment:
+      POSTGRES_USER: recete
+      POSTGRES_PASSWORD: recete123
+      POSTGRES_DB: recete
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recete -d recete"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  auth-service:
+    build: ./services/auth-service
+    container_name: auth-service
+    environment:
+      PORT: 4001
+      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      JWT_SECRET: super-secret-key
+      REGISTER_EMAIL_JWT_SECRET: register-email-jwt-shared-secret
+      MAIL_SERVICE_URL: http://mail-service:4011
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mail-service:
+        condition: service_started
+    ports:
+      - "4001:4001"
+
+  mail-service:
+    build: ./services/mail_service
+    container_name: mail-service
+    environment:
+      PORT: 4011
+      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      REGISTER_EMAIL_JWT_SECRET: register-email-jwt-shared-secret
+      REGISTRATION_CODE_TTL_MINUTES: "15"
+      REGISTRATION_PROOF_TTL: "30m"
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_REGISTRATION_SUBJECT: ${MAIL_REGISTRATION_SUBJECT:-Recete kayit dogrulama kodu}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "4011:4011"
+
+  stock-service:
+    build: ./services/stock-service
+    container_name: stock-service
+    environment:
+      PORT: 4002
+      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      TRANSACTIONS_SERVICE_URL: http://transactions-service:4006
+    depends_on:
+      postgres:
+        condition: service_healthy
+      receivables-payables-service:
+        condition: service_started
+    ports:
+      - "4002:4002"
+
+  finance-service:
+    build: ./services/finance-service
+    container_name: finance-service
+    environment:
+      PORT: 4003
+      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      TRANSACTIONS_SERVICE_URL: http://transactions-service:4006
+      APP_TIMEZONE: Europe/Istanbul
+    depends_on:
+      postgres:
+        condition: service_healthy
+      receivables-payables-service:
+        condition: service_started
+      transactions-service:
+        condition: service_started
+    ports:
+      - "4003:4003"
+
+  product-service:
+    build: ./services/product-service
+    container_name: product-service
+    environment:
+      PORT: 4004
+      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      CALC_SERVICE_URL: http://calc-service:4005
+      TRANSACTIONS_SERVICE_URL: http://transactions-service:4006
+    depends_on:
+      postgres:
+        condition: service_healthy
+      calc-service:
+        condition: service_started
+      receivables-payables-service:
+        condition: service_started
+    ports:
+      - "4004:4004"
+
+  calc-service:
+    build: ./services/calc-service
+    container_name: calc-service
+    environment:
+      PORT: 4005
+      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "4005:4005"
+
+  transactions-service:
+    build: ./services/transactions_service
+    container_name: transactions-service
+    environment:
+      PORT: 4006
+      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "4006:4006"
+
+  customer-service:
+    build: ./services/customer-service
+    container_name: customer-service
+    environment:
+      PORT: 4007
+      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      FINANCE_SERVICE_URL: http://finance-service:4003
+    depends_on:
+      postgres:
+        condition: service_healthy
+      finance-service:
+        condition: service_started
+    ports:
+      - "4007:4007"
+
+  table-maker-service:
+    build: ./services/table-maker_service
+    container_name: table-maker-service
+    environment:
+      PORT: 4008
+      CHROMIUM_PATH: /usr/bin/chromium-browser
+    ports:
+      - "4008:4008"
+
+  cleaner-service:
+    build: ./services/cleaner_service
+    container_name: cleaner-service
+    environment:
+      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      CLEANER_RETENTION_DAYS: 45
+      CLEANER_INTERVAL_MS: 86400000
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  notification-service:
+    build: ./services/notification-service
+    container_name: notification-service
+    environment:
+      PORT: 4009
+      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "4009:4009"
+
+  receivables-payables-service:
+    build: ./services/receivables-payables-service
+    container_name: receivables-payables-service
+    environment:
+      PORT: 4010
+      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      TRANSACTIONS_SERVICE_URL: http://transactions-service:4006
+    depends_on:
+      postgres:
+        condition: service_healthy
+      transactions-service:
+        condition: service_started
+    ports:
+      - "4010:4010"
+
+  api-gateway:
+    build: ./services/api-gateway
+    container_name: api-gateway
+    environment:
+      PORT: 4000
+      AUTH_SERVICE_URL: http://auth-service:4001
+      MAIL_SERVICE_URL: http://mail-service:4011
+      STOCK_SERVICE_URL: http://stock-service:4002
+      FINANCE_SERVICE_URL: http://finance-service:4003
+      PRODUCT_SERVICE_URL: http://product-service:4004
+      CALC_SERVICE_URL: http://calc-service:4005
+      TRANSACTIONS_SERVICE_URL: http://transactions-service:4006
+      CUSTOMER_SERVICE_URL: http://customer-service:4007
+      TABLE_MAKER_SERVICE_URL: http://table-maker-service:4008
+      NOTIFICATION_SERVICE_URL: http://notification-service:4009
+      RECEIVABLES_PAYABLES_SERVICE_URL: http://receivables-payables-service:4010
+    depends_on:
+      - auth-service
+      - mail-service
+      - stock-service
+      - finance-service
+      - calc-service
+      - product-service
+      - transactions-service
+      - customer-service
+      - table-maker-service
+      - notification-service
+      - receivables-payables-service
+    ports:
+      - "4000:4000"
+
+volumes:
+  postgres_data:

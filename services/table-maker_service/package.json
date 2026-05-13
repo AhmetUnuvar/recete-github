@@ -1,0 +1,14 @@
+{
+  "name": "table-maker-service",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "morgan": "^1.10.0",
+    "puppeteer-core": "^24.9.0"
+  }
+}
