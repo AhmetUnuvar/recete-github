@@ -5,6 +5,7 @@ node_modules/
 .expo/
 dist/
 web-build/
+build/
 
 # Native / build
 *.orig.*

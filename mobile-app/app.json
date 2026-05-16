@@ -19,6 +19,14 @@
             "89.167.4.8": {
               "NSExceptionAllowsInsecureHTTPLoads": true,
               "NSIncludesSubdomains": false
+            },
+            "192.168.0.11": {
+              "NSExceptionAllowsInsecureHTTPLoads": true,
+              "NSIncludesSubdomains": false
+            },
+            "localhost": {
+              "NSExceptionAllowsInsecureHTTPLoads": true,
+              "NSIncludesSubdomains": false
             }
           }
         }

@@ -232,4 +232,7 @@ services:
       - "4000:4000"
 
 volumes:
+  # Klasor adi degisince yeni volume acildi; eski veri recete_postgres_data icinde.
   postgres_data:
+    external: true
+    name: recete_postgres_data

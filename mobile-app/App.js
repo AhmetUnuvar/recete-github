@@ -30,6 +30,7 @@ import {
   completePasswordReset
 } from "./src/services/authService";
 import { COLORS } from "./src/constants/colors";
+import { API_BASE_URL } from "./src/constants/config";
 
 /** Cihazda bir kez yazilir; silinince (kaldirma / veri silme) tanitim yeniden gosterilir. App Store "indirme" sunucuda tutulmaz. */
 const ONBOARDING_STORAGE_KEY = "@recete_onboarding_completed";
@@ -466,6 +467,7 @@ export default function App() {
           onSendCode={onSendRegistrationCode}
           sendCodeLoading={sendCodeLoading}
           codeHint={registerCodeHint}
+          apiBaseUrl={API_BASE_URL}
           onChange={handleRegisterChange}
           message={message}
           loading={loading}

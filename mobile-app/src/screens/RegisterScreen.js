@@ -9,6 +9,7 @@ export default function RegisterScreen({
   onSendCode,
   sendCodeLoading,
   codeHint,
+  apiBaseUrl,
   onChange,
   message,
   loading,
@@ -97,6 +98,9 @@ export default function RegisterScreen({
       <TouchableOpacity style={styles.secondaryButton} onPress={onGoLogin}>
         <Text style={styles.secondaryButtonText}>Giris Ekranina Don</Text>
       </TouchableOpacity>
+      {apiBaseUrl ? (
+        <Text style={styles.apiHint}>API: {apiBaseUrl}</Text>
+      ) : null}
     </>
   );
 }
@@ -177,5 +181,12 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
     fontSize: 15,
     fontWeight: "700"
+  },
+  apiHint: {
+    color: COLORS.textLight,
+    fontSize: 11,
+    marginTop: 14,
+    textAlign: "center",
+    opacity: 0.7
   }
 });
