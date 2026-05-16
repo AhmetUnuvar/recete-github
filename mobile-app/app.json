@@ -5,6 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
     "extra": {
       "eas": {
         "projectId": "7e736104-8a51-47f4-9904-43e91411ddbe"
@@ -24,6 +25,8 @@
       }
     },
     "android": {
+      "package": "com.recete.mobile",
+      "versionCode": 1,
       "usesCleartextTraffic": true
     }
   }
