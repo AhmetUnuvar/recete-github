@@ -29,3 +29,7 @@ yarn-error.*
 # env
 .env
 .env.*.local
+play-upload-key/
+*.jks
+*.keystore
+*-credentials.md

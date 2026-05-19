@@ -5,6 +5,9 @@
   },
   "build": {
     "production": {
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "http://89.167.4.8"
+      },
       "android": {
         "buildType": "app-bundle"
       }
