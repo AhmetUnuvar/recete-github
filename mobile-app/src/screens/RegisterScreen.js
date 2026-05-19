@@ -1,6 +1,9 @@
 import React from "react";
 import { Text, TextInput, TouchableOpacity, StyleSheet, View, ActivityIndicator } from "react-native";
+import Constants from "expo-constants";
 import { COLORS } from "../constants/colors";
+
+const APP_VERSION = Constants.expoConfig?.version ?? "?";
 
 export default function RegisterScreen({
   form,
@@ -98,9 +101,7 @@ export default function RegisterScreen({
       <TouchableOpacity style={styles.secondaryButton} onPress={onGoLogin}>
         <Text style={styles.secondaryButtonText}>Giris Ekranina Don</Text>
       </TouchableOpacity>
-      {apiBaseUrl ? (
-        <Text style={styles.apiHint}>API: {apiBaseUrl}</Text>
-      ) : null}
+      <Text style={styles.apiHint}>v{APP_VERSION}{apiBaseUrl ? `  |  API: ${apiBaseUrl}` : ""}</Text>
     </>
   );
 }

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Recete Mobile",
     "slug": "recete-mobile",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "icon": "./assets/icon.png",
@@ -35,7 +35,7 @@
     },
     "android": {
       "package": "com.boatech.imalatrecetesi",
-      "versionCode": 6,
+      "versionCode": 7,
       "usesCleartextTraffic": true
     }
   }
