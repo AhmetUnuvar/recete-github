@@ -1,0 +1,5 @@
+*.aab
+*.apk
+play-upload-key/
+build/
+.expo/
