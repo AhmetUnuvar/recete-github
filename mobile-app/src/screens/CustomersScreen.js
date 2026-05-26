@@ -10,13 +10,16 @@ import {
   Pressable,
   ActivityIndicator,
   Alert,
-  RefreshControl
+  RefreshControl,
+  FlatList
 } from "react-native";
 import { COLORS } from "../constants/colors";
+import PageHeaderRightActions from "../components/PageHeaderRightActions";
 import { HORIZONTAL_PADDING, SCREEN_HEIGHT } from "../constants/layout";
 import {
   createCustomer,
   deleteCustomer,
+  getCities,
   getCustomers,
   setCustomerDoneStatus,
   updateCustomer
@@ -29,17 +32,68 @@ import {
 } from "../services/transactionsService";
 import { exportAndShareTable } from "../services/tableMakerService";
 import {
+  getOwnedProducts,
+  getRetails,
+  sellOwnedProduct,
+  sellRetail
+} from "../services/productService";
+import { getKdvRates } from "../services/calcService";
+import KdvPriceInput from "../components/KdvPriceInput";
+import { resolvePriceWithKdv } from "../utils/kdv";
+import {
   dismissNotification,
   getPendingNotificationsForPage,
   TARGET_PAGE_CUSTOMERS
 } from "../services/notificationService";
+
+const isProductionCostLine = (item) =>
+  Boolean(
+    item &&
+      !item.is_income &&
+      item.product_id &&
+      /uretim maliyeti/i.test(String(item.transaction_name || ""))
+  );
+
+const getCustomerTransactionDisplay = (item) => {
+  const profit = Number(item?.profit_amount);
+  if (item?.is_income && Number.isFinite(profit) && profit > 0) {
+    return {
+      typeLabel: "Kar",
+      amount: profit,
+      isProfit: true,
+      nameSuffix: ""
+    };
+  }
+  const amount = Number(item?.amount);
+  return {
+    typeLabel: item?.is_income ? "Gelir" : "Gider",
+    amount: Number.isFinite(amount) ? amount : 0,
+    isProfit: false,
+    nameSuffix: ""
+  };
+};
+
+const formatSellMoney = (v) => {
+  const n = Number(v);
+  if (Number.isNaN(n)) return "-";
+  return n.toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+};
+
+const formatSellQty = (v) => {
+  const n = Number(v);
+  if (Number.isNaN(n)) return "-";
+  return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
+};
 
 const emptyForm = () => ({
   customer_name: "",
   customer_id_number: "",
   customer_phone: "",
   current_name: "",
-  customer_company_name: ""
+  customer_company_name: "",
+  customer_city: "",
+  customer_district: "",
+  customer_address: ""
 });
 
 const toTurkishTitleCase = (value) => {
@@ -121,7 +175,11 @@ const parseNoticeMessage = (raw) => {
   return blocks;
 };
 
-export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
+export default function CustomersScreen({
+  userId,
+  customersFocusNonce = 0,
+  onTransactionsMutated
+}) {
   const [customers, setCustomers] = useState([]);
   const [searchText, setSearchText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -153,6 +211,50 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
   const [customersNoticeModalOpen, setCustomersNoticeModalOpen] = useState(false);
   const [customersNoticeCloseLoading, setCustomersNoticeCloseLoading] = useState(false);
   const [dontShowCustomersNoticeAgain, setDontShowCustomersNoticeAgain] = useState(false);
+  const [cities, setCities] = useState([]);
+  const [citiesLoading, setCitiesLoading] = useState(false);
+  const [cityPickerOpen, setCityPickerOpen] = useState(false);
+  const [customerSellStep, setCustomerSellStep] = useState(null);
+  const [customerSellListMode, setCustomerSellListMode] = useState(null);
+  const [ownedSellRows, setOwnedSellRows] = useState([]);
+  const [retailSellRows, setRetailSellRows] = useState([]);
+  const [customerSellListLoading, setCustomerSellListLoading] = useState(false);
+  const [sellOwnedTarget, setSellOwnedTarget] = useState(null);
+  const [sellRetailTarget, setSellRetailTarget] = useState(null);
+  const [sellQtyInput, setSellQtyInput] = useState("");
+  const [sellReceivedInput, setSellReceivedInput] = useState("");
+  const [ownedSellPriceInput, setOwnedSellPriceInput] = useState("");
+  const [ownedSellKdvIncluded, setOwnedSellKdvIncluded] = useState(false);
+  const [ownedSellKdvRate, setOwnedSellKdvRate] = useState(null);
+  const [retailSellUnitInput, setRetailSellUnitInput] = useState("");
+  const [retailSellKdvIncluded, setRetailSellKdvIncluded] = useState(false);
+  const [retailSellKdvRate, setRetailSellKdvRate] = useState(null);
+  const [kdvRates, setKdvRates] = useState([]);
+  const [customerSelling, setCustomerSelling] = useState(false);
+
+  const selectedCityName = useMemo(() => {
+    if (!form.customer_city) return "";
+    const hit = cities.find((c) => String(c.id) === String(form.customer_city));
+    return hit?.city_name || "";
+  }, [cities, form.customer_city]);
+
+  const loadCities = useCallback(async () => {
+    try {
+      setCitiesLoading(true);
+      const rows = await getCities();
+      setCities(rows);
+    } catch (error) {
+      setCities([]);
+      Alert.alert("Hata", error.message || "Şehirler yüklenemedi.");
+    } finally {
+      setCitiesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!modalOpen) return;
+    loadCities();
+  }, [modalOpen, loadCities]);
 
   const load = useCallback(async () => {
     if (!userId) {
@@ -273,24 +375,34 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
   const openModal = () => {
     setEditingCustomer(null);
     setForm(emptyForm());
+    setCityPickerOpen(false);
     setModalOpen(true);
   };
 
   const openEditModal = (customer) => {
     setEditingCustomer(customer);
+    setCityPickerOpen(false);
     setForm({
       customer_name: customer.customer_name || "",
       customer_id_number: customer.customer_id_number || "",
       customer_phone: customer.customer_phone || "",
       current_name: customer.current_name || "",
-      customer_company_name: customer.customer_company_name || ""
+      customer_company_name: customer.customer_company_name || "",
+      customer_city: customer.customer_city || "",
+      customer_district: customer.customer_district || "",
+      customer_address: customer.customer_address || ""
     });
     setModalOpen(true);
   };
 
   const closeModal = () => {
     if (saving) return;
+    setCityPickerOpen(false);
     setModalOpen(false);
+  };
+
+  const closeCityPicker = () => {
+    setCityPickerOpen(false);
   };
 
   const onSave = async () => {
@@ -303,6 +415,10 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
       Alert.alert("Uyarı", "Müşteri adı zorunludur.");
       return;
     }
+    if (!String(form.customer_city || "").trim()) {
+      Alert.alert("Uyarı", "Müşteri ili seçiniz.");
+      return;
+    }
     try {
       setSaving(true);
       const payload = {
@@ -310,7 +426,10 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
         customer_id_number: form.customer_id_number,
         customer_phone: form.customer_phone,
         current_name: form.current_name,
-        customer_company_name: form.customer_company_name
+        customer_company_name: form.customer_company_name,
+        customer_city: form.customer_city,
+        customer_district: form.customer_district,
+        customer_address: form.customer_address
       };
       if (editingCustomer?.id) {
         await updateCustomer(userId, editingCustomer.id, payload);
@@ -372,10 +491,252 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
   };
 
   const closeDetail = () => {
-    if (savingTxn) return;
+    if (savingTxn || customerSelling) return;
+    closeCustomerSellFlow();
     setDetailCustomer(null);
     setDetailTransactions([]);
     setDetailMessage("");
+  };
+
+  const closeCustomerSellFlow = () => {
+    if (customerSelling) return;
+    setCustomerSellStep(null);
+    setCustomerSellListMode(null);
+    setOwnedSellRows([]);
+    setRetailSellRows([]);
+    setSellOwnedTarget(null);
+    setSellRetailTarget(null);
+    setSellQtyInput("");
+    setSellReceivedInput("");
+    setOwnedSellPriceInput("");
+    setOwnedSellKdvIncluded(false);
+    setOwnedSellKdvRate(null);
+    setRetailSellUnitInput("");
+    setRetailSellKdvIncluded(false);
+    setRetailSellKdvRate(null);
+  };
+
+  const openCustomerSellFlow = async () => {
+    if (!detailCustomer?.id || !userId) return;
+    try {
+      const rows = await getKdvRates();
+      setKdvRates(rows);
+    } catch {
+      setKdvRates([]);
+    }
+    setCustomerSellStep("type");
+  };
+
+  const pickCustomerSellType = async (mode) => {
+    if (!userId) return;
+    setCustomerSellListMode(mode);
+    setCustomerSellStep("list");
+    setCustomerSellListLoading(true);
+    try {
+      if (mode === "owned") {
+        const data = await getOwnedProducts(userId);
+        setOwnedSellRows((Array.isArray(data) ? data : []).filter((r) => (Number(r.adet) || 0) > 0));
+        setRetailSellRows([]);
+      } else {
+        const data = await getRetails(userId);
+        setRetailSellRows(
+          (Array.isArray(data) ? data : []).filter((r) => (Number(r.retail_quantity) || 0) > 0)
+        );
+        setOwnedSellRows([]);
+      }
+    } catch (error) {
+      Alert.alert("Hata", error.message || "Urunler yuklenemedi.");
+      closeCustomerSellFlow();
+    } finally {
+      setCustomerSellListLoading(false);
+    }
+  };
+
+  const getOwnedSalePricePreview = () => {
+    const resolved = resolvePriceWithKdv(ownedSellPriceInput, ownedSellKdvIncluded, ownedSellKdvRate);
+    return resolved.ok ? resolved.final : null;
+  };
+
+  const getRetailSaleTotalPreview = () => {
+    if (!sellRetailTarget) return null;
+    const unitResolved = resolvePriceWithKdv(
+      retailSellUnitInput,
+      retailSellKdvIncluded,
+      retailSellKdvRate
+    );
+    const qty = Number(String(sellQtyInput || "").replace(",", "."));
+    if (!unitResolved.ok || Number.isNaN(qty) || qty <= 0) return null;
+    return Math.round(unitResolved.final * qty * 10000) / 10000;
+  };
+
+  const startOwnedSellForCustomer = (item) => {
+    if (!item?.product_id) return;
+    const price = Number(item.price);
+    setSellOwnedTarget(item);
+    setOwnedSellPriceInput(Number.isFinite(price) && price > 0 ? String(price) : "");
+    setOwnedSellKdvIncluded(true);
+    setOwnedSellKdvRate(null);
+    setSellReceivedInput("");
+    setCustomerSellStep("owned-price");
+  };
+
+  const startRetailSellForCustomer = (item) => {
+    if (!item?.id) return;
+    const qty = Number(item.retail_quantity);
+    if (!(qty > 0)) {
+      Alert.alert("Uyari", "Bu urun icin satilabilir miktar kalmadi.");
+      return;
+    }
+    const unit = Number(item.retail_price);
+    setSellRetailTarget(item);
+    setSellQtyInput("");
+    setRetailSellUnitInput(Number.isFinite(unit) && unit > 0 ? String(unit) : "");
+    setRetailSellKdvIncluded(true);
+    setRetailSellKdvRate(null);
+    setSellReceivedInput("");
+    setCustomerSellStep("retail-qty");
+  };
+
+  const onCustomerOwnedPriceContinue = () => {
+    const resolved = resolvePriceWithKdv(ownedSellPriceInput, ownedSellKdvIncluded, ownedSellKdvRate);
+    if (!resolved.ok) {
+      Alert.alert("Uyari", resolved.message || "Satis fiyatini kontrol edin.");
+      return;
+    }
+    setSellReceivedInput(String(Math.round(resolved.final * 10000) / 10000));
+    setCustomerSellStep("owned-payment");
+  };
+
+  const onCustomerRetailQtyContinue = () => {
+    const qty = Number(String(sellQtyInput || "").replace(",", "."));
+    const maxQty = Number(sellRetailTarget?.retail_quantity) || 0;
+    if (Number.isNaN(qty) || qty <= 0) {
+      Alert.alert("Uyari", "Gecerli bir satis miktari giriniz.");
+      return;
+    }
+    if (qty > maxQty + 1e-9) {
+      Alert.alert("Uyari", `En fazla ${formatSellQty(maxQty)} adet satabilirsiniz.`);
+      return;
+    }
+    setCustomerSellStep("retail-price");
+  };
+
+  const onCustomerRetailPriceContinue = () => {
+    const unitResolved = resolvePriceWithKdv(
+      retailSellUnitInput,
+      retailSellKdvIncluded,
+      retailSellKdvRate
+    );
+    if (!unitResolved.ok) {
+      Alert.alert("Uyari", unitResolved.message || "Birim satis fiyatini kontrol edin.");
+      return;
+    }
+    const total = getRetailSaleTotalPreview();
+    if (total === null || total <= 0) {
+      Alert.alert("Uyari", "Satis tutari hesaplanamadi.");
+      return;
+    }
+    setSellReceivedInput(String(total));
+    setCustomerSellStep("retail-payment");
+  };
+
+  const afterCustomerSellSuccess = async () => {
+    const customerId = detailCustomer?.id;
+    closeCustomerSellFlow();
+    if (customerId) {
+      await loadCustomerTransactions(customerId);
+    }
+    if (typeof onTransactionsMutated === "function") {
+      onTransactionsMutated();
+    }
+  };
+
+  const confirmOwnedSellForCustomer = async () => {
+    if (!userId || !detailCustomer?.id || !sellOwnedTarget?.product_id) return;
+    const totalPrev = getOwnedSalePricePreview();
+    if (totalPrev === null || totalPrev <= 0) {
+      Alert.alert("Uyari", "Satis fiyati okunamadi.");
+      return;
+    }
+    const recv = Number(String(sellReceivedInput || "").replace(",", "."));
+    if (Number.isNaN(recv) || recv < 0) {
+      Alert.alert("Uyari", "Tahsil ettiginiz tutar gecerli bir sayi olmalidir.");
+      return;
+    }
+    if (recv > totalPrev + 1e-6) {
+      Alert.alert("Uyari", "Tahsil ettiginiz tutar satis fiyatindan buyuk olamaz.");
+      return;
+    }
+    try {
+      setCustomerSelling(true);
+      await sellOwnedProduct({
+        userId,
+        productId: sellOwnedTarget.product_id,
+        buyerId: detailCustomer.id,
+        sale_price: totalPrev,
+        received_amount: recv
+      });
+      await afterCustomerSellSuccess();
+      Alert.alert("Basarili", "Urun satildi.");
+    } catch (error) {
+      Alert.alert("Hata", error.message || "Satis islemi basarisiz.");
+    } finally {
+      setCustomerSelling(false);
+    }
+  };
+
+  const confirmRetailSellForCustomer = async () => {
+    if (!userId || !detailCustomer?.id || !sellRetailTarget?.id) return;
+    const qty = Number(String(sellQtyInput || "").replace(",", "."));
+    const maxQty = Number(sellRetailTarget.retail_quantity) || 0;
+    const totalPrev = getRetailSaleTotalPreview();
+    if (Number.isNaN(qty) || qty <= 0) {
+      Alert.alert("Uyari", "Gecerli bir satis miktari giriniz.");
+      return;
+    }
+    if (qty > maxQty + 1e-9) {
+      Alert.alert("Uyari", `En fazla ${formatSellQty(maxQty)} adet satabilirsiniz.`);
+      return;
+    }
+    const unitResolved = resolvePriceWithKdv(
+      retailSellUnitInput,
+      retailSellKdvIncluded,
+      retailSellKdvRate
+    );
+    if (!unitResolved.ok) {
+      Alert.alert("Uyari", unitResolved.message || "Birim satis fiyatini kontrol edin.");
+      return;
+    }
+    if (totalPrev === null || totalPrev <= 0) {
+      Alert.alert("Uyari", "Satis tutari hesaplanamadi.");
+      return;
+    }
+    const recv = Number(String(sellReceivedInput || "").replace(",", "."));
+    if (Number.isNaN(recv) || recv < 0) {
+      Alert.alert("Uyari", "Tahsil ettiginiz tutar gecerli bir sayi olmalidir.");
+      return;
+    }
+    if (recv > totalPrev + 1e-6) {
+      Alert.alert("Uyari", "Tahsil ettiginiz tutar satis tutarindan buyuk olamaz.");
+      return;
+    }
+    try {
+      setCustomerSelling(true);
+      await sellRetail({
+        userId,
+        retailId: sellRetailTarget.id,
+        buyerId: detailCustomer.id,
+        quantitySold: qty,
+        unit_sale_price: unitResolved.final,
+        received_amount: recv
+      });
+      await afterCustomerSellSuccess();
+      Alert.alert("Basarili", "Perakende satis kaydedildi.");
+    } catch (error) {
+      Alert.alert("Hata", error.message || "Satis islemi basarisiz.");
+    } finally {
+      setCustomerSelling(false);
+    }
   };
 
   const exportCustomerTransactions = async (format, targetCustomer, transactions) => {
@@ -388,23 +749,25 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
         { key: "amount", label: "Tutar" },
         { key: "date", label: "Tarih" }
       ];
-      const rows = (transactions || []).map((item) => {
-        const n = Number(item.amount);
-        const dt = new Date(item.transaction_time || item.created_at);
-        return {
-          transaction_name: item.product_name
-            ? `Ürün Satışı: ${item.product_name}`
-            : item.transaction_name || (item.is_income ? "Gelir" : "Gider"),
-          type: item.is_income ? "Gelir" : "Gider",
-          amount: Number.isFinite(n)
-            ? `${item.is_income ? "+" : "-"}${n.toLocaleString("tr-TR", {
-                minimumFractionDigits: 0,
-                maximumFractionDigits: 2
-              })}`
-            : "-",
-          date: Number.isNaN(dt.getTime()) ? "-" : dt.toLocaleDateString("tr-TR")
-        };
-      });
+      const rows = (transactions || [])
+        .filter((item) => !isProductionCostLine(item))
+        .map((item) => {
+          const display = getCustomerTransactionDisplay(item);
+          const dt = new Date(item.transaction_time || item.created_at);
+          return {
+            transaction_name: item.product_name
+              ? `Ürün Satışı: ${item.product_name}`
+              : item.transaction_name || display.typeLabel,
+            type: display.typeLabel,
+            amount: Number.isFinite(display.amount)
+              ? `${display.isProfit || item.is_income ? "+" : "-"}${display.amount.toLocaleString("tr-TR", {
+                  minimumFractionDigits: 0,
+                  maximumFractionDigits: 2
+                })}`
+              : "-",
+            date: Number.isNaN(dt.getTime()) ? "-" : dt.toLocaleDateString("tr-TR")
+          };
+        });
       await exportAndShareTable({
         title: `${targetCustomer.customer_name || "Müşteri"} İşlem Tablosu`,
         columns,
@@ -440,7 +803,16 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
   const q = searchText.trim().toLocaleLowerCase("tr-TR");
   const filteredCustomers = q
     ? customers.filter((c) =>
-        [c.customer_name, c.customer_phone, c.customer_id_number, c.current_name, c.customer_company_name]
+        [
+          c.customer_name,
+          c.customer_phone,
+          c.customer_id_number,
+          c.current_name,
+          c.customer_company_name,
+          c.customer_city_name,
+          c.customer_district,
+          c.customer_address
+        ]
           .filter(Boolean)
           .some((v) => String(v).toLocaleLowerCase("tr-TR").includes(q))
       )
@@ -454,14 +826,20 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
     [detailTransactions]
   );
 
+  const visibleDetailTransactions = useMemo(
+    () => sortedDetailTransactions.filter((item) => !isProductionCostLine(item)),
+    [sortedDetailTransactions]
+  );
+
   const detailNetAmount = useMemo(
     () =>
-      sortedDetailTransactions.reduce((sum, item) => {
-        const n = Number(item.amount);
-        if (!Number.isFinite(n)) return sum;
-        return sum + (item.is_income ? n : -n);
+      visibleDetailTransactions.reduce((sum, item) => {
+        const display = getCustomerTransactionDisplay(item);
+        if (!Number.isFinite(display.amount)) return sum;
+        if (display.isProfit || item.is_income) return sum + display.amount;
+        return sum - display.amount;
       }, 0),
-    [sortedDetailTransactions]
+    [visibleDetailTransactions]
   );
 
   const detailRecipeDayCount =
@@ -601,7 +979,7 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
     ]);
   };
 
-  const tableMinWidth = 1060;
+  const tableMinWidth = 1320;
 
   const renderCustomersNoticeModal = () => (
     <Modal
@@ -685,17 +1063,19 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
       }
     >
       <View style={styles.topRow}>
-        <Text style={styles.title}>Müşteriler</Text>
-        <TouchableOpacity style={styles.addBtn} onPress={openModal} disabled={!userId}>
-          <Text style={styles.addBtnText}>Müşteri Ekle</Text>
-        </TouchableOpacity>
+        <Text style={[styles.title, styles.titleInTopRow]}>Müşteriler</Text>
+        <PageHeaderRightActions>
+          <TouchableOpacity style={styles.addBtn} onPress={openModal} disabled={!userId}>
+            <Text style={styles.addBtnText}>Müşteri Ekle</Text>
+          </TouchableOpacity>
+        </PageHeaderRightActions>
       </View>
 
       <TextInput
         style={styles.searchInput}
         value={searchText}
         onChangeText={setSearchText}
-        placeholder="Müşteri adı, telefon, TC, cari veya şirket ile ara"
+        placeholder="Müşteri adı, telefon, TC, il, ilçe, cari veya şirket ile ara"
         placeholderTextColor="#666"
       />
       <View style={styles.quickFilterRow}>
@@ -732,6 +1112,8 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
               <Text style={styles.headerCell}>Telefon</Text>
               <Text style={[styles.headerCell, styles.colCari]}>Cari Adı</Text>
               <Text style={[styles.headerCell, styles.colCompany]}>Şirket Adı</Text>
+              <Text style={[styles.headerCell, styles.colCity]}>Şehir</Text>
+              <Text style={[styles.headerCell, styles.colDistrict]}>İlçe</Text>
               <Text style={styles.headerCell}>Durum</Text>
               <Text style={[styles.headerCell, styles.colAction]}>İşlem</Text>
             </View>
@@ -757,6 +1139,12 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
                   </Text>
                   <Text style={[styles.dataCell, styles.colCompany]} numberOfLines={2}>
                     {cell(row.customer_company_name)}
+                  </Text>
+                  <Text style={[styles.dataCell, styles.colCity]} numberOfLines={2}>
+                    {cell(row.customer_city_name)}
+                  </Text>
+                  <Text style={[styles.dataCell, styles.colDistrict]} numberOfLines={2}>
+                    {cell(row.customer_district)}
                   </Text>
                   <Text style={styles.dataCell}>{row.is_done ? "Tamamlandı" : "Aktif"}</Text>
                   <View style={[styles.dataCell, styles.colAction, styles.actionCell]}>
@@ -786,10 +1174,63 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
         </ScrollView>
       ) : null}
 
-      <Modal visible={modalOpen} transparent animationType="fade" onRequestClose={closeModal}>
+      <Modal
+        visible={modalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (cityPickerOpen) {
+            closeCityPicker();
+            return;
+          }
+          closeModal();
+        }}
+      >
         <View style={styles.modalRoot}>
-          <Pressable style={styles.modalBackdrop} onPress={closeModal} />
+          <Pressable
+            style={styles.modalBackdrop}
+            onPress={() => {
+              if (cityPickerOpen) {
+                closeCityPicker();
+                return;
+              }
+              closeModal();
+            }}
+          />
           <View style={styles.modalSheet}>
+            {cityPickerOpen ? (
+              <>
+                <View style={styles.cityPickerHeader}>
+                  <TouchableOpacity style={styles.cityPickerBackBtn} onPress={closeCityPicker}>
+                    <Text style={styles.cityPickerBackText}>Geri</Text>
+                  </TouchableOpacity>
+                  <Text style={[styles.modalTitle, styles.cityPickerTitle]}>İl Seçiniz</Text>
+                </View>
+                <FlatList
+                  style={styles.cityPickerList}
+                  data={cities}
+                  keyExtractor={(item) => String(item.id)}
+                  keyboardShouldPersistTaps="handled"
+                  ListEmptyComponent={
+                    <Text style={styles.cityPickerEmpty}>
+                      {citiesLoading ? "Yükleniyor..." : "Şehir listesi boş."}
+                    </Text>
+                  }
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={styles.cityPickerRow}
+                      onPress={() => {
+                        setForm((p) => ({ ...p, customer_city: item.id }));
+                        closeCityPicker();
+                      }}
+                    >
+                      <Text style={styles.cityPickerRowText}>{item.city_name}</Text>
+                    </TouchableOpacity>
+                  )}
+                />
+              </>
+            ) : (
+              <>
             <Text style={styles.modalTitle}>{editingCustomer ? "Müşteri Düzenle" : "Müşteri Ekle"}</Text>
             <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
               <Text style={styles.fieldLabel}>Müşteri Adı Giriniz :</Text>
@@ -837,6 +1278,41 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
                 placeholder="Şirket adı"
                 placeholderTextColor="#666"
               />
+              <Text style={styles.fieldLabel}>Müşteri İli :</Text>
+              <TouchableOpacity
+                style={styles.selectBox}
+                onPress={() => {
+                  if (cities.length === 0 && !citiesLoading) {
+                    loadCities();
+                  }
+                  setCityPickerOpen(true);
+                }}
+              >
+                <Text style={selectedCityName ? styles.selectValue : styles.selectPlaceholder}>
+                  {citiesLoading
+                    ? "Şehirler yükleniyor..."
+                    : selectedCityName || "İl seçiniz"}
+                </Text>
+                <Text style={styles.chevron}>v</Text>
+              </TouchableOpacity>
+              <Text style={styles.fieldLabel}>Müşteri İlçesi :</Text>
+              <TextInput
+                style={styles.input}
+                value={form.customer_district}
+                onChangeText={(t) => setForm((p) => ({ ...p, customer_district: t }))}
+                placeholder="İlçe"
+                placeholderTextColor="#666"
+              />
+              <Text style={styles.fieldLabel}>Müşteri Adresi :</Text>
+              <TextInput
+                style={[styles.input, styles.addressInput]}
+                value={form.customer_address}
+                onChangeText={(t) => setForm((p) => ({ ...p, customer_address: t }))}
+                placeholder="Açık adres"
+                placeholderTextColor="#666"
+                multiline
+                textAlignVertical="top"
+              />
               <View style={styles.modalActions}>
                 <TouchableOpacity style={styles.cancelBtn} onPress={closeModal} disabled={saving}>
                   <Text style={styles.cancelBtnText}>Vazgeç</Text>
@@ -848,6 +1324,8 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
                 </TouchableOpacity>
               </View>
             </ScrollView>
+              </>
+            )}
           </View>
         </View>
       </Modal>
@@ -866,6 +1344,19 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
                   : `Reçete ${detailRecipeDayCount}. gün (devam ediyor).`}
               </Text>
             ) : null}
+            {detailCustomer?.customer_city_name ||
+            detailCustomer?.customer_district ||
+            detailCustomer?.customer_address ? (
+              <Text style={styles.customerLocationText}>
+                {[
+                  detailCustomer.customer_city_name,
+                  detailCustomer.customer_district,
+                  detailCustomer.customer_address
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </Text>
+            ) : null}
             <Text style={[styles.fieldLabel, styles.detailSectionLabel]}>Musteriye ait islemler</Text>
             <View style={[styles.modalActions, styles.detailModalActions]}>
               <TouchableOpacity
@@ -874,7 +1365,7 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
                 disabled={savingTxn || detailCustomer?.is_done === true}
               >
                 <Text style={styles.editBtnText}>
-                  {detailCustomer?.is_done ? "Tamamlandı" : "Reçeteyi Tamamla"}
+                  {detailCustomer?.is_done ? "Tamamlandı" : "Satışı Bitir"}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -900,9 +1391,16 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
                 <Text style={styles.cancelBtnText}>Gider Ekle</Text>
               </TouchableOpacity>
               <TouchableOpacity
+                style={styles.sellProductBtn}
+                onPress={openCustomerSellFlow}
+                disabled={savingTxn || customerSelling}
+              >
+                <Text style={styles.sellProductBtnText}>Ürün Sat</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
                 style={styles.editBtn}
                 onPress={onPressExport}
-                disabled={savingTxn || exporting}
+                disabled={savingTxn || exporting || customerSelling}
               >
                 <Text style={styles.editBtnText}>{exporting ? "Hazırlanıyor..." : "İndir"}</Text>
               </TouchableOpacity>
@@ -924,10 +1422,10 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
                   <Text style={[styles.txHeaderCell, styles.txColAction]}>İşlem</Text>
                 </View>
 
-                {sortedDetailTransactions.map((item) => {
-                  const n = Number(item.amount);
-                  const amountTxt = Number.isFinite(n)
-                    ? `${item.is_income ? "+" : "-"}${n.toLocaleString("tr-TR", {
+                {visibleDetailTransactions.map((item) => {
+                  const display = getCustomerTransactionDisplay(item);
+                  const amountTxt = Number.isFinite(display.amount)
+                    ? `${display.isProfit || item.is_income ? "+" : "-"}${display.amount.toLocaleString("tr-TR", {
                         minimumFractionDigits: 0,
                         maximumFractionDigits: 2
                       })}`
@@ -935,31 +1433,20 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
                   const dt = new Date(item.transaction_time || item.created_at);
                   const txName = item.product_name
                     ? `Ürün Satışı: ${item.product_name}`
-                    : item.transaction_name || (item.is_income ? "Gelir" : "Gider");
+                    : item.transaction_name || display.typeLabel;
+                  const amountStyle = display.isProfit
+                    ? styles.profitText
+                    : item.is_income
+                      ? styles.incomeText
+                      : styles.expenseText;
 
                   return (
                     <View key={item.id} style={styles.txDataRow}>
                       <Text style={[styles.txCell, styles.txColName]} numberOfLines={2}>
                         {txName}
                       </Text>
-                      <Text
-                        style={[
-                          styles.txCell,
-                          styles.txColType,
-                          item.is_income ? styles.incomeText : styles.expenseText
-                        ]}
-                      >
-                        {item.is_income ? "Gelir" : "Gider"}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.txCell,
-                          styles.txColAmount,
-                          item.is_income ? styles.incomeText : styles.expenseText
-                        ]}
-                      >
-                        {amountTxt}
-                      </Text>
+                      <Text style={[styles.txCell, styles.txColType, amountStyle]}>{display.typeLabel}</Text>
+                      <Text style={[styles.txCell, styles.txColAmount, amountStyle]}>{amountTxt}</Text>
                       <Text style={[styles.txCell, styles.txColDate]}>
                         {Number.isNaN(dt.getTime()) ? "-" : dt.toLocaleDateString("tr-TR")}
                       </Text>
@@ -977,14 +1464,309 @@ export default function CustomersScreen({ userId, customersFocusNonce = 0 }) {
               </View>
             </ScrollView>
             <Text style={[styles.netSummaryText, styles.detailNetSummary]}>
-              Toplam kazanılan para:{" "}
+              Toplam kar:{" "}
               {detailNetAmount.toLocaleString("tr-TR", {
                 minimumFractionDigits: 0,
                 maximumFractionDigits: 2
               })}
             </Text>
-            {!detailLoading && sortedDetailTransactions.length === 0 ? (
+            {!detailLoading && visibleDetailTransactions.length === 0 ? (
               <Text style={styles.emptyText}>Bu müşteri için işlem bulunamadı.</Text>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={customerSellStep != null}
+        transparent
+        animationType="fade"
+        onRequestClose={closeCustomerSellFlow}
+      >
+        <View style={styles.modalRoot}>
+          <Pressable
+            style={styles.modalBackdrop}
+            onPress={() => (customerSelling ? null : closeCustomerSellFlow())}
+          />
+          <View style={[styles.modalSheet, styles.customerSellSheet]}>
+            {customerSellStep === "type" ? (
+              <>
+                <Text style={styles.modalTitle}>Ürün Sat</Text>
+                <Text style={styles.customerSellHint}>
+                  {detailCustomer?.customer_name || "Müşteri"} için satış türünü seçin.
+                </Text>
+                <TouchableOpacity
+                  style={styles.customerSellTypeBtn}
+                  onPress={() => pickCustomerSellType("owned")}
+                  disabled={customerSelling}
+                >
+                  <Text style={styles.customerSellTypeBtnText}>Ürünlerim</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.customerSellTypeBtn}
+                  onPress={() => pickCustomerSellType("retail")}
+                  disabled={customerSelling}
+                >
+                  <Text style={styles.customerSellTypeBtnText}>Perakende Ürünlerim</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.cancelBtn} onPress={closeCustomerSellFlow}>
+                  <Text style={styles.cancelBtnText}>Vazgeç</Text>
+                </TouchableOpacity>
+              </>
+            ) : null}
+
+            {customerSellStep === "list" ? (
+              <>
+                <Text style={styles.modalTitle}>
+                  {customerSellListMode === "owned" ? "Ürünlerim" : "Perakende Ürünlerim"}
+                </Text>
+                <Text style={styles.customerSellHint}>Satılacak ürünü seçin.</Text>
+                {customerSellListLoading ? (
+                  <ActivityIndicator size="small" color={COLORS.primary} style={styles.customerSellLoader} />
+                ) : (
+                  <ScrollView style={styles.customerSellList}>
+                    {customerSellListMode === "owned"
+                      ? ownedSellRows.map((item) => (
+                          <TouchableOpacity
+                            key={item.product_id}
+                            style={styles.customerSellRow}
+                            onPress={() => startOwnedSellForCustomer(item)}
+                            disabled={customerSelling}
+                          >
+                            <Text style={styles.customerSellRowTitle}>{item.product_name || "-"}</Text>
+                            <Text style={styles.customerSellRowMeta}>
+                              Adet: {formatSellQty(item.adet)} · Fiyat: {formatSellMoney(item.price)} TL
+                            </Text>
+                          </TouchableOpacity>
+                        ))
+                      : retailSellRows.map((item) => (
+                          <TouchableOpacity
+                            key={item.id}
+                            style={styles.customerSellRow}
+                            onPress={() => startRetailSellForCustomer(item)}
+                            disabled={customerSelling}
+                          >
+                            <Text style={styles.customerSellRowTitle}>{item.retail_name || "-"}</Text>
+                            <Text style={styles.customerSellRowMeta}>
+                              Stok: {formatSellQty(item.retail_quantity)} {item.unit_name || ""} · Birim satış:{" "}
+                              {formatSellMoney(item.retail_price)} TL
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                    {(customerSellListMode === "owned" ? ownedSellRows : retailSellRows).length === 0 &&
+                    !customerSellListLoading ? (
+                      <Text style={styles.customerSellEmpty}>Satilabilir urun yok.</Text>
+                    ) : null}
+                  </ScrollView>
+                )}
+                <TouchableOpacity
+                  style={styles.cancelBtn}
+                  onPress={() => setCustomerSellStep("type")}
+                  disabled={customerSelling}
+                >
+                  <Text style={styles.cancelBtnText}>Geri</Text>
+                </TouchableOpacity>
+              </>
+            ) : null}
+
+            {customerSellStep === "owned-price" ? (
+              <>
+                <Text style={styles.modalTitle}>Satış fiyatı</Text>
+                <Text style={styles.customerSellHint}>
+                  {sellOwnedTarget?.product_name || "Ürün"} — KDV dahil değilse oran seçin.
+                </Text>
+                <ScrollView style={styles.customerSellList} keyboardShouldPersistTaps="handled">
+                  <KdvPriceInput
+                    label="Satış fiyatı"
+                    placeholder="Örn: 100"
+                    value={ownedSellPriceInput}
+                    onChangeValue={setOwnedSellPriceInput}
+                    kdvIncluded={ownedSellKdvIncluded}
+                    onKdvIncludedChange={(v) => {
+                      setOwnedSellKdvIncluded(v);
+                      if (v) setOwnedSellKdvRate(null);
+                    }}
+                    selectedKdvRate={ownedSellKdvRate}
+                    onSelectedKdvRateChange={setOwnedSellKdvRate}
+                    kdvRates={kdvRates}
+                    inputStyle={styles.input}
+                    disabled={customerSelling}
+                  />
+                </ScrollView>
+                <View style={styles.customerSellActionRow}>
+                  <TouchableOpacity
+                    style={styles.cancelBtn}
+                    onPress={() => setCustomerSellStep("list")}
+                    disabled={customerSelling}
+                  >
+                    <Text style={styles.cancelBtnText}>Geri</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.saveBtn}
+                    onPress={onCustomerOwnedPriceContinue}
+                    disabled={customerSelling}
+                  >
+                    <Text style={styles.saveBtnText}>Devam</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : null}
+
+            {customerSellStep === "owned-payment" ? (
+              <>
+                <Text style={styles.modalTitle}>Tahsilat</Text>
+                <Text style={styles.customerSellHint}>
+                  {sellOwnedTarget?.product_name || "Ürün"} — Müşteri: {detailCustomer?.customer_name || "-"}
+                </Text>
+                <Text style={styles.customerSellHint}>
+                  Satış fiyati: {getOwnedSalePricePreview() != null ? formatSellMoney(getOwnedSalePricePreview()) : "-"}{" "}
+                  TL
+                </Text>
+                <Text style={styles.customerSellHint}>
+                  Ne kadar tahsil ettiniz? Kalan tutar Borçlar Alacaklar sayfasında görünür.
+                </Text>
+                <TextInput
+                  style={styles.input}
+                  value={sellReceivedInput}
+                  onChangeText={setSellReceivedInput}
+                  placeholder="Tahsil edilen tutar"
+                  placeholderTextColor="#666"
+                  keyboardType="decimal-pad"
+                  editable={!customerSelling}
+                />
+                <View style={styles.customerSellActionRow}>
+                  <TouchableOpacity
+                    style={styles.cancelBtn}
+                    onPress={() => setCustomerSellStep("owned-price")}
+                    disabled={customerSelling}
+                  >
+                    <Text style={styles.cancelBtnText}>Geri</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.saveBtn}
+                    onPress={confirmOwnedSellForCustomer}
+                    disabled={customerSelling}
+                  >
+                    <Text style={styles.saveBtnText}>{customerSelling ? "Kaydediliyor..." : "Sat"}</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : null}
+
+            {customerSellStep === "retail-qty" ? (
+              <>
+                <Text style={styles.modalTitle}>Satis miktari</Text>
+                <Text style={styles.customerSellHint}>
+                  {sellRetailTarget?.retail_name || "Ürün"} — Mevcut:{" "}
+                  {formatSellQty(sellRetailTarget?.retail_quantity)} {sellRetailTarget?.unit_name || ""}
+                </Text>
+                <TextInput
+                  style={styles.input}
+                  value={sellQtyInput}
+                  onChangeText={setSellQtyInput}
+                  placeholder="Kac adet sattiniz?"
+                  placeholderTextColor="#666"
+                  keyboardType="decimal-pad"
+                  editable={!customerSelling}
+                />
+                <View style={styles.customerSellActionRow}>
+                  <TouchableOpacity
+                    style={styles.cancelBtn}
+                    onPress={() => setCustomerSellStep("list")}
+                    disabled={customerSelling}
+                  >
+                    <Text style={styles.cancelBtnText}>Geri</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.saveBtn}
+                    onPress={onCustomerRetailQtyContinue}
+                    disabled={customerSelling}
+                  >
+                    <Text style={styles.saveBtnText}>Devam</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : null}
+
+            {customerSellStep === "retail-price" ? (
+              <>
+                <Text style={styles.modalTitle}>Birim satış fiyatı</Text>
+                <Text style={styles.customerSellHint}>
+                  {sellRetailTarget?.retail_name || "Ürün"} — Miktar: {sellQtyInput || "-"}
+                </Text>
+                <ScrollView style={styles.customerSellList} keyboardShouldPersistTaps="handled">
+                  <KdvPriceInput
+                    label="Birim satış fiyatı"
+                    placeholder="Birim satış fiyatı"
+                    value={retailSellUnitInput}
+                    onChangeValue={setRetailSellUnitInput}
+                    kdvIncluded={retailSellKdvIncluded}
+                    onKdvIncludedChange={(v) => {
+                      setRetailSellKdvIncluded(v);
+                      if (v) setRetailSellKdvRate(null);
+                    }}
+                    selectedKdvRate={retailSellKdvRate}
+                    onSelectedKdvRateChange={setRetailSellKdvRate}
+                    kdvRates={kdvRates}
+                    inputStyle={styles.input}
+                    disabled={customerSelling}
+                  />
+                </ScrollView>
+                <View style={styles.customerSellActionRow}>
+                  <TouchableOpacity
+                    style={styles.cancelBtn}
+                    onPress={() => setCustomerSellStep("retail-qty")}
+                    disabled={customerSelling}
+                  >
+                    <Text style={styles.cancelBtnText}>Geri</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.saveBtn}
+                    onPress={onCustomerRetailPriceContinue}
+                    disabled={customerSelling}
+                  >
+                    <Text style={styles.saveBtnText}>Devam</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : null}
+
+            {customerSellStep === "retail-payment" ? (
+              <>
+                <Text style={styles.modalTitle}>Tahsilat</Text>
+                <Text style={styles.customerSellHint}>
+                  {sellRetailTarget?.retail_name || "Ürün"} — Toplam:{" "}
+                  {getRetailSaleTotalPreview() != null ? formatSellMoney(getRetailSaleTotalPreview()) : "-"} TL
+                </Text>
+                <Text style={styles.customerSellHint}>
+                  Ne kadar tahsil ettiniz? Kalan tutar Borçlar Alacaklar sayfasında görünür.
+                </Text>
+                <TextInput
+                  style={styles.input}
+                  value={sellReceivedInput}
+                  onChangeText={setSellReceivedInput}
+                  placeholder="Tahsil edilen tutar"
+                  placeholderTextColor="#666"
+                  keyboardType="decimal-pad"
+                  editable={!customerSelling}
+                />
+                <View style={styles.customerSellActionRow}>
+                  <TouchableOpacity
+                    style={styles.cancelBtn}
+                    onPress={() => setCustomerSellStep("retail-price")}
+                    disabled={customerSelling}
+                  >
+                    <Text style={styles.cancelBtnText}>Geri</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.saveBtn}
+                    onPress={confirmRetailSellForCustomer}
+                    disabled={customerSelling}
+                  >
+                    <Text style={styles.saveBtnText}>{customerSelling ? "Kaydediliyor..." : "Sat"}</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
             ) : null}
           </View>
         </View>
@@ -1099,10 +1881,13 @@ const styles = StyleSheet.create({
   },
   topRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
     marginBottom: 14,
     gap: 10
+  },
+  titleInTopRow: {
+    marginBottom: 0
   },
   title: {
     flex: 1,
@@ -1216,6 +2001,14 @@ const styles = StyleSheet.create({
     width: 170,
     textAlign: "left"
   },
+  colCity: {
+    width: 120,
+    textAlign: "left"
+  },
+  colDistrict: {
+    width: 120,
+    textAlign: "left"
+  },
   colAction: {
     width: 170
   },
@@ -1248,6 +2041,81 @@ const styles = StyleSheet.create({
     color: "#d9534f",
     fontSize: 12,
     fontWeight: "700"
+  },
+  sellProductBtn: {
+    borderWidth: 1,
+    borderColor: "#28a745",
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: "#1a3d24"
+  },
+  sellProductBtnText: {
+    color: "#62d26f",
+    fontSize: 12,
+    fontWeight: "800"
+  },
+  customerSellSheet: {
+    maxHeight: "85%"
+  },
+  customerSellHint: {
+    color: COLORS.textLight,
+    fontSize: 12,
+    lineHeight: 18,
+    marginBottom: 10
+  },
+  customerSellTypeBtn: {
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 10,
+    backgroundColor: COLORS.black
+  },
+  customerSellTypeBtnText: {
+    color: COLORS.primary,
+    fontSize: 14,
+    fontWeight: "800",
+    textAlign: "center"
+  },
+  customerSellList: {
+    maxHeight: 280,
+    marginBottom: 10
+  },
+  customerSellLoader: {
+    marginVertical: 16
+  },
+  customerSellRow: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 8,
+    backgroundColor: COLORS.black
+  },
+  customerSellRowTitle: {
+    color: COLORS.primary,
+    fontSize: 14,
+    fontWeight: "700"
+  },
+  customerSellRowMeta: {
+    color: COLORS.textLight,
+    fontSize: 12,
+    marginTop: 4
+  },
+  customerSellEmpty: {
+    color: COLORS.textLight,
+    fontSize: 13,
+    textAlign: "center",
+    paddingVertical: 16
+  },
+  customerSellActionRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+    marginTop: 8
   },
   emptyRow: {
     borderLeftWidth: 1,
@@ -1366,6 +2234,86 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     backgroundColor: COLORS.black
   },
+  addressInput: {
+    minHeight: 72
+  },
+  selectBox: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    backgroundColor: COLORS.black,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    marginBottom: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between"
+  },
+  selectValue: {
+    color: COLORS.primary,
+    fontSize: 14,
+    flex: 1,
+    paddingRight: 8
+  },
+  selectPlaceholder: {
+    color: "#666",
+    fontSize: 14,
+    flex: 1,
+    paddingRight: 8
+  },
+  chevron: {
+    color: COLORS.primary,
+    fontSize: 14,
+    fontWeight: "700"
+  },
+  cityPickerHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+    gap: 10
+  },
+  cityPickerBackBtn: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10
+  },
+  cityPickerBackText: {
+    color: COLORS.primary,
+    fontSize: 12,
+    fontWeight: "700"
+  },
+  cityPickerTitle: {
+    flex: 1,
+    marginBottom: 0
+  },
+  cityPickerList: {
+    maxHeight: 420
+  },
+  cityPickerRow: {
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border
+  },
+  cityPickerRowText: {
+    color: COLORS.primary,
+    fontSize: 14,
+    fontWeight: "600"
+  },
+  cityPickerEmpty: {
+    color: COLORS.textLight,
+    fontSize: 13,
+    paddingVertical: 16,
+    textAlign: "center"
+  },
+  customerLocationText: {
+    color: COLORS.textLight,
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 10
+  },
   modalActions: {
     flexDirection: "row",
     justifyContent: "flex-end",
@@ -1454,6 +2402,9 @@ const styles = StyleSheet.create({
   },
   incomeText: {
     color: "#62d26f"
+  },
+  profitText: {
+    color: "#e8c547"
   },
   expenseText: {
     color: "#ff6d6d"

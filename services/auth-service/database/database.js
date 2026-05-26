@@ -1,7 +1,7 @@
 const { Pool } = require("pg");
 
 const createPool = () => {
-  return new Pool({ connectionString: process.env.DATABASE_URL });
+  return new Pool({ connectionString: process.env.DATABASE_URL, max: 25 });
 };
 
 const initAuthDatabase = async (pool) => {

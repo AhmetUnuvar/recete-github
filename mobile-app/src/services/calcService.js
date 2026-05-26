@@ -31,3 +31,12 @@ export const previewRecipeCost = async (materialLines) => {
   }
   return data;
 };
+
+export const getKdvRates = async () => {
+  const response = await fetch(`${API_BASE_URL}/calc/kdv-rates`);
+  const data = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(data.message || "KDV oranlari getirilemedi.");
+  }
+  return Array.isArray(data) ? data : [];
+};

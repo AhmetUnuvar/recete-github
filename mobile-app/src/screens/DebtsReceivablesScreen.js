@@ -15,6 +15,7 @@ import {
   Platform
 } from "react-native";
 import { COLORS } from "../constants/colors";
+import PageTitleRow from "../components/PageTitleRow";
 import { HORIZONTAL_PADDING } from "../constants/layout";
 import {
   getBalances,
@@ -331,7 +332,7 @@ export default function DebtsReceivablesScreen({ userId, onTransactionsMutated }
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
       >
-        <Text style={styles.title}>Borclar Alacaklar</Text>
+        <PageTitleRow title="Borclar Alacaklar" titleStyle={styles.title} />
         <Text style={styles.subtitle}>
           Alacak satirlarinda tahsil / borcta odeme kaydi; tarih ile tahsil veya odeme hedefini gorun. Kalan sifirlaninca kayit listeden duser.
         </Text>

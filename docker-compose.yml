@@ -1,7 +1,45 @@
 # Dis erisim: API http://<sunucu-ip>:4000 (api-gateway). Mobil: mobile-app/.env.example
+# Her yerde ayni proje adi (container isimleri sabit oldugu icin onemli):
+#   docker compose up -d --build
+# Durdurmak: docker compose down
+name: recete
+
 services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    container_name: recete-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    restart: unless-stopped
+    container_name: recete-pgbouncer
+    volumes:
+      - ./infra/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./infra/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "6432:6432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U recete -d recete"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   postgres:
     image: postgres:16
+    restart: unless-stopped
     command: [
       "postgres",
       "-c", "log_connections=on",
@@ -26,15 +64,16 @@ services:
 
   auth-service:
     build: ./services/auth-service
+    restart: unless-stopped
     container_name: auth-service
     environment:
       PORT: 4001
-      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      DATABASE_URL: postgresql://recete:recete123@pgbouncer:6432/recete
       JWT_SECRET: super-secret-key
       REGISTER_EMAIL_JWT_SECRET: register-email-jwt-shared-secret
       MAIL_SERVICE_URL: http://mail-service:4011
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
       mail-service:
         condition: service_started
@@ -43,10 +82,11 @@ services:
 
   mail-service:
     build: ./services/mail_service
+    restart: unless-stopped
     container_name: mail-service
     environment:
       PORT: 4011
-      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      DATABASE_URL: postgresql://recete:recete123@pgbouncer:6432/recete
       REGISTER_EMAIL_JWT_SECRET: register-email-jwt-shared-secret
       REGISTRATION_CODE_TTL_MINUTES: "15"
       REGISTRATION_PROOF_TTL: "30m"
@@ -58,20 +98,24 @@ services:
       MAIL_FROM: ${MAIL_FROM:-}
       MAIL_REGISTRATION_SUBJECT: ${MAIL_REGISTRATION_SUBJECT:-Recete kayit dogrulama kodu}
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
     ports:
       - "4011:4011"
 
   stock-service:
     build: ./services/stock-service
+    restart: unless-stopped
     container_name: stock-service
     environment:
       PORT: 4002
-      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      DATABASE_URL: postgresql://recete:recete123@pgbouncer:6432/recete
       TRANSACTIONS_SERVICE_URL: http://transactions-service:4006
+      REDIS_URL: redis://redis:6379
     depends_on:
-      postgres:
+      pgbouncer:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       receivables-payables-service:
         condition: service_started
@@ -80,14 +124,18 @@ services:
 
   finance-service:
     build: ./services/finance-service
+    restart: unless-stopped
     container_name: finance-service
     environment:
       PORT: 4003
-      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      DATABASE_URL: postgresql://recete:recete123@pgbouncer:6432/recete
       TRANSACTIONS_SERVICE_URL: http://transactions-service:4006
       APP_TIMEZONE: Europe/Istanbul
+      REDIS_URL: redis://redis:6379
     depends_on:
-      postgres:
+      pgbouncer:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       receivables-payables-service:
         condition: service_started
@@ -98,14 +146,18 @@ services:
 
   product-service:
     build: ./services/product-service
+    restart: unless-stopped
     container_name: product-service
     environment:
       PORT: 4004
-      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      DATABASE_URL: postgresql://recete:recete123@pgbouncer:6432/recete
       CALC_SERVICE_URL: http://calc-service:4005
       TRANSACTIONS_SERVICE_URL: http://transactions-service:4006
+      REDIS_URL: redis://redis:6379
     depends_on:
-      postgres:
+      pgbouncer:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       calc-service:
         condition: service_started
@@ -116,37 +168,46 @@ services:
 
   calc-service:
     build: ./services/calc-service
+    restart: unless-stopped
     container_name: calc-service
     environment:
       PORT: 4005
-      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      DATABASE_URL: postgresql://recete:recete123@pgbouncer:6432/recete
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
     ports:
       - "4005:4005"
 
   transactions-service:
     build: ./services/transactions_service
+    restart: unless-stopped
     container_name: transactions-service
     environment:
       PORT: 4006
-      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      DATABASE_URL: postgresql://recete:recete123@pgbouncer:6432/recete
+      REDIS_URL: redis://redis:6379
     depends_on:
-      postgres:
+      pgbouncer:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     ports:
       - "4006:4006"
 
   customer-service:
     build: ./services/customer-service
+    restart: unless-stopped
     container_name: customer-service
     environment:
       PORT: 4007
-      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      DATABASE_URL: postgresql://recete:recete123@pgbouncer:6432/recete
       FINANCE_SERVICE_URL: http://finance-service:4003
+      REDIS_URL: redis://redis:6379
     depends_on:
-      postgres:
+      pgbouncer:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       finance-service:
         condition: service_started
@@ -155,6 +216,7 @@ services:
 
   table-maker-service:
     build: ./services/table-maker_service
+    restart: unless-stopped
     container_name: table-maker-service
     environment:
       PORT: 4008
@@ -164,36 +226,39 @@ services:
 
   cleaner-service:
     build: ./services/cleaner_service
+    restart: unless-stopped
     container_name: cleaner-service
     environment:
-      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      DATABASE_URL: postgresql://recete:recete123@pgbouncer:6432/recete
       CLEANER_RETENTION_DAYS: 45
       CLEANER_INTERVAL_MS: 86400000
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
 
   notification-service:
     build: ./services/notification-service
+    restart: unless-stopped
     container_name: notification-service
     environment:
       PORT: 4009
-      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      DATABASE_URL: postgresql://recete:recete123@pgbouncer:6432/recete
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
     ports:
       - "4009:4009"
 
   receivables-payables-service:
     build: ./services/receivables-payables-service
+    restart: unless-stopped
     container_name: receivables-payables-service
     environment:
       PORT: 4010
-      DATABASE_URL: postgresql://recete:recete123@postgres:5432/recete
+      DATABASE_URL: postgresql://recete:recete123@pgbouncer:6432/recete
       TRANSACTIONS_SERVICE_URL: http://transactions-service:4006
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
       transactions-service:
         condition: service_started
@@ -202,6 +267,7 @@ services:
 
   api-gateway:
     build: ./services/api-gateway
+    restart: unless-stopped
     container_name: api-gateway
     environment:
       PORT: 4000
@@ -236,3 +302,4 @@ volumes:
   postgres_data:
     external: true
     name: recete_postgres_data
+  redis_data:

@@ -3,3 +3,5 @@
 play-upload-key/
 build/
 .expo/
+.env
+.env.local

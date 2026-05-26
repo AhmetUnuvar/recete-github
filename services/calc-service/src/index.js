@@ -6,6 +6,7 @@ const { createPool, initCalcDatabase } = require("../database/database");
 
 const app = express();
 const port = process.env.PORT || 4005;
+let dbPool = null;
 
 app.use(cors());
 app.use(morgan("dev"));
@@ -27,10 +28,32 @@ app.post("/recipe-cost", (req, res) => {
   return res.json(result);
 });
 
+app.get("/kdv-rates", async (_req, res) => {
+  if (!dbPool) {
+    return res.status(503).json({ message: "Veritabani baglantisi yok." });
+  }
+  try {
+    const result = await dbPool.query(
+      `SELECT id, kdv_rate
+       FROM kdv_table
+       WHERE deleted_at IS NULL
+       ORDER BY kdv_rate ASC`
+    );
+    return res.json(
+      result.rows.map((row) => ({
+        id: row.id,
+        kdv_rate: Number(row.kdv_rate)
+      }))
+    );
+  } catch (error) {
+    return res.status(500).json({ message: "KDV oranlari getirilemedi.", detail: error.message });
+  }
+});
+
 const start = async () => {
   if (process.env.DATABASE_URL) {
-    const pool = createPool();
-    await initCalcDatabase(pool);
+    dbPool = createPool();
+    await initCalcDatabase(dbPool);
   } else {
     console.warn("[calc-service] DATABASE_URL tanimli degil; profit_db baslatilmadi.");
   }

@@ -1,9 +1,20 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import { SafeAreaView, View, Text, TouchableOpacity, Pressable, StyleSheet, Animated } from "react-native";
 import { COLORS } from "../constants/colors";
 import { HORIZONTAL_PADDING, SIDEBAR_WIDTH } from "../constants/layout";
+import { AppNavContext } from "../context/AppNavContext";
 
 export default function SidebarLayout({ activeKey, onSelect, children }) {
+  const navValue = useMemo(
+    () => ({
+      goHome: () => {
+        if (activeKey !== "home") {
+          onSelect("home");
+        }
+      }
+    }),
+    [activeKey, onSelect]
+  );
   const [isOpen, setIsOpen] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const slideAnim = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current;
@@ -18,6 +29,8 @@ export default function SidebarLayout({ activeKey, onSelect, children }) {
     { key: "add-product", label: "Ürün Ekle" },
     { key: "my-products", label: "Ürün Reçetelerim" },
     { key: "my-owned-products", label: "Ürünlerim" },
+    { key: "retail-buy", label: "Perakende Ürün Al" },
+    { key: "my-retail-products", label: "Perakende Ürünlerim" },
     { key: "debts-receivables", label: "Borçlar Alacaklar" },
     { key: "earnings-summary", label: "Kazanç Özeti" },
     { key: "profile", label: "Profil" },
@@ -61,6 +74,7 @@ export default function SidebarLayout({ activeKey, onSelect, children }) {
   }, [isOpen, backdropAnim, slideAnim]);
 
   return (
+    <AppNavContext.Provider value={navValue}>
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>
         <TouchableOpacity style={styles.hamburgerButton} onPress={() => setIsOpen(true)}>
@@ -105,6 +119,7 @@ export default function SidebarLayout({ activeKey, onSelect, children }) {
         </View>
       )}
     </SafeAreaView>
+    </AppNavContext.Provider>
   );
 }
 

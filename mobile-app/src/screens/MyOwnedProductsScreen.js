@@ -14,8 +14,27 @@ import {
 } from "react-native";
 import { COLORS } from "../constants/colors";
 import { HORIZONTAL_PADDING } from "../constants/layout";
-import { getOwnedProducts, sellOwnedProduct } from "../services/productService";
+import { getOwnedProducts, sellOwnedProduct, setProductAlert } from "../services/productService";
 import { getCustomers } from "../services/customerService";
+import { getKdvRates } from "../services/calcService";
+import KdvPriceInput from "../components/KdvPriceInput";
+import { resolvePriceWithKdv } from "../utils/kdv";
+import PageHeaderRightActions from "../components/PageHeaderRightActions";
+
+const parseAlertThreshold = (raw) => {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+};
+
+const isProductLow = (item) => {
+  const threshold = parseAlertThreshold(item?.product_alert);
+  if (threshold === null) return false;
+  const adet = Number(item?.adet);
+  if (!Number.isFinite(adet)) return false;
+  return adet <= threshold;
+};
 
 export default function MyOwnedProductsScreen({ userId, refreshNonce = 0, onGoToRecipes }) {
   const [rows, setRows] = useState([]);
@@ -29,7 +48,14 @@ export default function MyOwnedProductsScreen({ userId, refreshNonce = 0, onGoTo
   const [sellTarget, setSellTarget] = useState(null);
   const [selectedBuyerId, setSelectedBuyerId] = useState(null);
   const [receivedAmountInput, setReceivedAmountInput] = useState("");
+  const [sellPriceInput, setSellPriceInput] = useState("");
+  const [sellKdvIncluded, setSellKdvIncluded] = useState(false);
+  const [sellKdvRate, setSellKdvRate] = useState(null);
+  const [kdvRates, setKdvRates] = useState([]);
   const [selling, setSelling] = useState(false);
+  const [alertProduct, setAlertProduct] = useState(null);
+  const [alertThresholdInput, setAlertThresholdInput] = useState("");
+  const [savingAlert, setSavingAlert] = useState(false);
 
   const closeSellModal = () => {
     if (selling) return;
@@ -38,11 +64,14 @@ export default function MyOwnedProductsScreen({ userId, refreshNonce = 0, onGoTo
     setSellTarget(null);
     setSelectedBuyerId(null);
     setReceivedAmountInput("");
+    setSellPriceInput("");
+    setSellKdvIncluded(false);
+    setSellKdvRate(null);
   };
 
   const getSalePricePreview = () => {
-    const n = Number(sellTarget?.price);
-    return Number.isFinite(n) ? n : null;
+    const resolved = resolvePriceWithKdv(sellPriceInput, sellKdvIncluded, sellKdvRate);
+    return resolved.ok ? resolved.final : null;
   };
 
   const onSellModalContinue = () => {
@@ -50,13 +79,17 @@ export default function MyOwnedProductsScreen({ userId, refreshNonce = 0, onGoTo
       Alert.alert("Uyari", "Lutfen bir musteri secin.");
       return;
     }
-    const tp = getSalePricePreview();
-    if (tp === null || tp <= 0) {
-      Alert.alert("Uyari", "Satis fiyati okunamadi. Listeyi yenileyip tekrar deneyin.");
+    setSellModalStep(2);
+  };
+
+  const onSellPriceContinue = () => {
+    const resolved = resolvePriceWithKdv(sellPriceInput, sellKdvIncluded, sellKdvRate);
+    if (!resolved.ok) {
+      Alert.alert("Uyari", resolved.message || "Satis fiyatini kontrol edin.");
       return;
     }
-    setReceivedAmountInput(String(Math.round(tp * 10000) / 10000));
-    setSellModalStep(2);
+    setReceivedAmountInput(String(Math.round(resolved.final * 10000) / 10000));
+    setSellModalStep(3);
   };
 
   const load = useCallback(async () => {
@@ -69,9 +102,19 @@ export default function MyOwnedProductsScreen({ userId, refreshNonce = 0, onGoTo
       setLoading(true);
       setMessage("");
       const data = await getOwnedProducts(userId);
-      setRows(data);
-      const customerRows = await getCustomers(userId, { isDone: false });
+      setRows(
+        data.map((row) => ({
+          ...row,
+          adet: Number(row.adet) || 0,
+          product_alert: parseAlertThreshold(row.product_alert)
+        }))
+      );
+      const [customerRows, kdvRows] = await Promise.all([
+        getCustomers(userId, { isDone: false }),
+        getKdvRates().catch(() => [])
+      ]);
       setCustomers(customerRows);
+      setKdvRates(kdvRows);
     } catch (error) {
       setMessage(error.message || "Liste yuklenemedi.");
       setRows([]);
@@ -91,7 +134,13 @@ export default function MyOwnedProductsScreen({ userId, refreshNonce = 0, onGoTo
       setRefreshing(true);
       const data = await getOwnedProducts(userId);
       const customerRows = await getCustomers(userId, { isDone: false });
-      setRows(data);
+      setRows(
+        data.map((row) => ({
+          ...row,
+          adet: Number(row.adet) || 0,
+          product_alert: parseAlertThreshold(row.product_alert)
+        }))
+      );
       setCustomers(customerRows);
       setMessage("");
     } catch (error) {
@@ -109,6 +158,75 @@ export default function MyOwnedProductsScreen({ userId, refreshNonce = 0, onGoTo
           .includes(searchText.trim().toLowerCase())
   );
 
+  const closeAlertModal = () => {
+    if (savingAlert) return;
+    setAlertProduct(null);
+    setAlertThresholdInput("");
+  };
+
+  const openAlertModal = (item) => {
+    setAlertProduct(item);
+    const existing = item?.product_alert;
+    setAlertThresholdInput(
+      existing !== null && existing !== undefined && !Number.isNaN(Number(existing))
+        ? String(existing)
+        : ""
+    );
+  };
+
+  const onSaveProductAlert = async () => {
+    if (!alertProduct?.product_id || !userId) return;
+    const threshold = Number(String(alertThresholdInput || "").replace(",", "."));
+    if (Number.isNaN(threshold) || threshold < 0) {
+      Alert.alert("Uyari", "Gecerli bir uyari esigi giriniz (0 veya buyuk).");
+      return;
+    }
+    try {
+      setSavingAlert(true);
+      await setProductAlert({
+        userId,
+        productId: alertProduct.product_id,
+        productAlert: threshold
+      });
+      setRows((prev) =>
+        prev.map((row) =>
+          row.product_id === alertProduct.product_id ? { ...row, product_alert: threshold } : row
+        )
+      );
+      closeAlertModal();
+      await load();
+      Alert.alert("Basarili", "Urun uyarisi kaydedildi.");
+    } catch (error) {
+      Alert.alert("Hata", error.message || "Urun uyarisi kaydedilemedi.");
+    } finally {
+      setSavingAlert(false);
+    }
+  };
+
+  const onClearProductAlert = async () => {
+    if (!alertProduct?.product_id || !userId) return;
+    try {
+      setSavingAlert(true);
+      await setProductAlert({
+        userId,
+        productId: alertProduct.product_id,
+        productAlert: null
+      });
+      setRows((prev) =>
+        prev.map((row) =>
+          row.product_id === alertProduct.product_id ? { ...row, product_alert: null } : row
+        )
+      );
+      closeAlertModal();
+      await load();
+      Alert.alert("Basarili", "Urun uyarisi kaldirildi.");
+    } catch (error) {
+      Alert.alert("Hata", error.message || "Urun uyarisi kaldirilamadi.");
+    } finally {
+      setSavingAlert(false);
+    }
+  };
+
   const handleSell = async (item) => {
     if (!userId || !item?.product_id) return;
     if (customers.length === 0) {
@@ -118,9 +236,13 @@ export default function MyOwnedProductsScreen({ userId, refreshNonce = 0, onGoTo
       );
       return;
     }
+    const listed = Number(item.price);
     setSellTarget(item);
     setSelectedBuyerId(customers[0]?.id || null);
     setSellModalStep(1);
+    setSellPriceInput(Number.isFinite(listed) && listed > 0 ? String(listed) : "");
+    setSellKdvIncluded(true);
+    setSellKdvRate(null);
     setReceivedAmountInput("");
     setSellModalOpen(true);
   };
@@ -150,6 +272,7 @@ export default function MyOwnedProductsScreen({ userId, refreshNonce = 0, onGoTo
         userId,
         productId: sellTarget.product_id,
         buyerId: selectedBuyerId,
+        sale_price: totalPrev,
         received_amount: recv
       });
       setSellModalOpen(false);
@@ -178,13 +301,15 @@ export default function MyOwnedProductsScreen({ userId, refreshNonce = 0, onGoTo
         <Text style={[styles.title, styles.titleInHeader]} numberOfLines={2}>
           Ürünlerim
         </Text>
-        {typeof onGoToRecipes === "function" ? (
-          <TouchableOpacity style={styles.recipesBtn} onPress={onGoToRecipes} activeOpacity={0.85}>
-            <Text style={styles.recipesBtnText} numberOfLines={2}>
-              Ürün reçeteleri
-            </Text>
-          </TouchableOpacity>
-        ) : null}
+        <PageHeaderRightActions>
+          {typeof onGoToRecipes === "function" ? (
+            <TouchableOpacity style={styles.recipesBtn} onPress={onGoToRecipes} activeOpacity={0.85}>
+              <Text style={styles.recipesBtnText} numberOfLines={2}>
+                Ürün reçeteleri
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </PageHeaderRightActions>
       </View>
       {!userId ? (
         <Text style={styles.messageText}>Gormek icin giris yapin.</Text>
@@ -236,22 +361,78 @@ export default function MyOwnedProductsScreen({ userId, refreshNonce = 0, onGoTo
                 maximumFractionDigits: 2
               })
             : "-";
+          const lowProduct = isProductLow(item);
           return (
             <View key={item.product_id} style={styles.card}>
               <View style={styles.cardRow}>
                 <View style={styles.cardTextWrap}>
-                  <Text style={styles.cardTitle}>{item.product_name || "-"}</Text>
+                  <View style={styles.cardTitleRow}>
+                    {lowProduct ? (
+                      <Text style={styles.lowProductBadge} accessibilityLabel="Urun uyarisi">
+                        !
+                      </Text>
+                    ) : null}
+                    <Text style={[styles.cardTitle, lowProduct && styles.cardTitleLow]} numberOfLines={2}>
+                      {item.product_name || "-"}
+                    </Text>
+                  </View>
+                  {lowProduct ? (
+                    <Text style={styles.lowProductHint}>Ürününüz uyarı eşiğine yaklaşıyor</Text>
+                  ) : null}
                   <Text style={styles.cardMeta}>Adet: {adetTxt}</Text>
                   <Text style={styles.cardPrice}>Satis Fiyati: {priceTxt}</Text>
                 </View>
-                <TouchableOpacity style={styles.sellBtn} activeOpacity={0.85} onPress={() => handleSell(item)}>
-                  <Text style={styles.sellBtnText}>Sat</Text>
-                </TouchableOpacity>
+                <View style={styles.cardActions}>
+                  <TouchableOpacity style={styles.alertBtn} activeOpacity={0.85} onPress={() => openAlertModal(item)}>
+                    <Text style={styles.alertBtnText}>Uyari Ekle</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.sellBtn} activeOpacity={0.85} onPress={() => handleSell(item)}>
+                    <Text style={styles.sellBtnText}>Sat</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
           );
         })
       )}
+
+      <Modal visible={alertProduct != null} transparent animationType="fade" onRequestClose={closeAlertModal}>
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.modalBackdrop} onPress={closeAlertModal} />
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>Urun Uyarisi</Text>
+            <Text style={styles.modalSubTitle}>
+              {alertProduct?.product_name || "Urun"} — Mevcut adet: {alertProduct?.adet ?? "-"}
+            </Text>
+            <Text style={styles.modalSubTitle}>
+              Uretilen adet bu degerin altina veya esidine dustugunde kirmizi uyari gosterilir.
+            </Text>
+            <Text style={styles.alertFieldLabel}>Uyari esigi (adet)</Text>
+            <TextInput
+              style={styles.paymentInput}
+              value={alertThresholdInput}
+              onChangeText={setAlertThresholdInput}
+              placeholder="Orn: 5"
+              placeholderTextColor="#666"
+              keyboardType="decimal-pad"
+              editable={!savingAlert}
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.cancelBtn} onPress={closeAlertModal} disabled={savingAlert}>
+                <Text style={styles.cancelBtnText}>Iptal</Text>
+              </TouchableOpacity>
+              {alertProduct?.product_alert != null && !Number.isNaN(Number(alertProduct.product_alert)) ? (
+                <TouchableOpacity style={styles.cancelBtn} onPress={onClearProductAlert} disabled={savingAlert}>
+                  <Text style={styles.cancelBtnText}>Kaldir</Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity style={styles.confirmBtn} onPress={onSaveProductAlert} disabled={savingAlert}>
+                <Text style={styles.confirmBtnText}>{savingAlert ? "Kaydediliyor..." : "Kaydet"}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={sellModalOpen}
@@ -264,7 +445,7 @@ export default function MyOwnedProductsScreen({ userId, refreshNonce = 0, onGoTo
       >
         <View style={styles.modalRoot}>
           <Pressable style={styles.modalBackdrop} onPress={() => (selling ? null : closeSellModal())} />
-          <View style={[styles.modalSheet, sellModalStep === 2 && styles.modalSheetTall]}>
+          <View style={[styles.modalSheet, sellModalStep >= 2 && styles.modalSheetTall]}>
             {sellModalStep === 1 ? (
               <>
                 <Text style={styles.modalTitle}>Musteri Sec</Text>
@@ -287,6 +468,42 @@ export default function MyOwnedProductsScreen({ userId, refreshNonce = 0, onGoTo
                     <Text style={styles.cancelBtnText}>Vazgec</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.confirmBtn} onPress={onSellModalContinue} disabled={selling}>
+                    <Text style={styles.confirmBtnText}>Devam</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : sellModalStep === 2 ? (
+              <>
+                <Text style={styles.modalTitle}>Satis Fiyati</Text>
+                <Text style={styles.modalSubTitle}>
+                  {sellTarget?.product_name || "Urun"} — KDV dahil degilse oran secin; tutar musteriye satis fiyatina
+                  yansir.
+                </Text>
+                <ScrollView style={styles.modalList} keyboardShouldPersistTaps="handled">
+                  <KdvPriceInput
+                    label="Satis fiyati"
+                    placeholder="Orn: 100"
+                    value={sellPriceInput}
+                    onChangeValue={setSellPriceInput}
+                    kdvIncluded={sellKdvIncluded}
+                    onKdvIncludedChange={(v) => {
+                      setSellKdvIncluded(v);
+                      if (v) setSellKdvRate(null);
+                    }}
+                    selectedKdvRate={sellKdvRate}
+                    onSelectedKdvRateChange={setSellKdvRate}
+                    kdvRates={kdvRates}
+                  />
+                </ScrollView>
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={styles.cancelBtn}
+                    onPress={() => setSellModalStep(1)}
+                    disabled={selling}
+                  >
+                    <Text style={styles.cancelBtnText}>Geri</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.confirmBtn} onPress={onSellPriceContinue} disabled={selling}>
                     <Text style={styles.confirmBtnText}>Devam</Text>
                   </TouchableOpacity>
                 </View>
@@ -339,7 +556,7 @@ export default function MyOwnedProductsScreen({ userId, refreshNonce = 0, onGoTo
                     style={styles.cancelBtn}
                     onPress={() => {
                       if (selling) return;
-                      setSellModalStep(1);
+                      setSellModalStep(2);
                     }}
                     disabled={selling}
                   >
@@ -369,7 +586,7 @@ const styles = StyleSheet.create({
   },
   pageTitleRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 12,
     marginTop: 8,
@@ -468,10 +685,61 @@ const styles = StyleSheet.create({
   cardTextWrap: {
     flex: 1
   },
+  cardTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8
+  },
   cardTitle: {
     color: COLORS.primary,
     fontSize: 15,
-    fontWeight: "700"
+    fontWeight: "700",
+    flex: 1
+  },
+  cardTitleLow: {
+    color: "#ff6d6d"
+  },
+  lowProductBadge: {
+    color: "#ffffff",
+    backgroundColor: "#d9534f",
+    fontWeight: "900",
+    fontSize: 12,
+    width: 18,
+    height: 18,
+    lineHeight: 18,
+    textAlign: "center",
+    borderRadius: 9,
+    overflow: "hidden"
+  },
+  lowProductHint: {
+    color: "#ff6d6d",
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 2,
+    marginBottom: 4
+  },
+  cardActions: {
+    alignItems: "flex-end",
+    gap: 8
+  },
+  alertBtn: {
+    backgroundColor: "#3a3520",
+    borderWidth: 1,
+    borderColor: "#e8c547",
+    borderRadius: 9,
+    paddingVertical: 8,
+    paddingHorizontal: 10
+  },
+  alertBtnText: {
+    color: "#e8c547",
+    fontSize: 11,
+    fontWeight: "800"
+  },
+  alertFieldLabel: {
+    color: COLORS.primary,
+    fontSize: 13,
+    fontWeight: "700",
+    marginBottom: 6
   },
   cardMeta: {
     color: COLORS.textLight,

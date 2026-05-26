@@ -13,6 +13,7 @@ import {
   View
 } from "react-native";
 import { COLORS } from "../constants/colors";
+import PageTitleRow from "../components/PageTitleRow";
 import { HORIZONTAL_PADDING } from "../constants/layout";
 import { getCustomers } from "../services/customerService";
 import {
@@ -248,7 +249,7 @@ export default function EarningsSummaryScreen({ userId, onTransactionsMutated })
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />
       }
     >
-      <Text style={styles.title}>Kazanç Özeti</Text>
+      <PageTitleRow title="Kazanç Özeti" titleStyle={styles.title} />
       {!userId ? <Text style={styles.messageText}>Verileri görmek için giriş yapın.</Text> : null}
       {message ? <Text style={styles.messageText}>{message}</Text> : null}
 

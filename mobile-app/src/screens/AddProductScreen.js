@@ -17,14 +17,32 @@ import { HORIZONTAL_PADDING } from "../constants/layout";
 import { getStocks, getUnits } from "../services/stockService";
 import { createProduct } from "../services/productService";
 import { previewRecipeCost } from "../services/calcService";
+import KdvPriceInput from "../components/KdvPriceInput";
+import { resolvePriceWithKdv } from "../utils/kdv";
 import { getFixedRecords } from "../services/financeService";
 import {
   dismissNotification,
   getPendingNotificationsForPage,
   TARGET_PAGE_ADD_PRODUCT
 } from "../services/notificationService";
+import GoHomeButton from "../components/GoHomeButton";
+import PageHeaderRightActions from "../components/PageHeaderRightActions";
 
 const roundMoney = (n) => Math.round(Number(n) * 10000) / 10000;
+
+const formatStockRemaining = (quantity, unitName) => {
+  const n = Number(quantity);
+  if (Number.isNaN(n)) return unitName ? `0 ${unitName}` : "0";
+  const display = Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
+  return unitName ? `${display} ${unitName}` : display;
+};
+
+const formatMaterialPickerTitle = (item) => {
+  if (!item) return "-";
+  return item.stock_category_name
+    ? `${item.stock_name} (${item.stock_category_name})`
+    : item.stock_name || "-";
+};
 
 /** Bildirim metnini bloklara böler (paragraf ve madde işaretleri). */
 const parseNoticeMessage = (raw) => {
@@ -84,6 +102,8 @@ export default function AddProductScreen({ userId, onGoToStockAdd, addProductFoc
   const [costPreviewError, setCostPreviewError] = useState("");
   const [showPriceModal, setShowPriceModal] = useState(false);
   const [salePriceInput, setSalePriceInput] = useState("");
+  const [saleKdvIncluded, setSaleKdvIncluded] = useState(false);
+  const [saleKdvRate, setSaleKdvRate] = useState(null);
   const [pendingMaterialsPayload, setPendingMaterialsPayload] = useState([]);
   const [productionHoursInput, setProductionHoursInput] = useState("1");
   const [fixedRecords, setFixedRecords] = useState([]);
@@ -438,10 +458,20 @@ export default function AddProductScreen({ userId, onGoToStockAdd, addProductFoc
 
     setPendingMaterialsPayload(materialsPayload);
     setSalePriceInput("");
+    setSaleKdvIncluded(false);
+    setSaleKdvRate(null);
     setShowPriceModal(true);
   };
 
-  const renderPickerModal = (key, title, data, keyExtractor, renderLabel, onSelect) => (
+  const renderPickerModal = (
+    key,
+    title,
+    data,
+    keyExtractor,
+    renderLabel,
+    onSelect,
+    renderSubLabel = null
+  ) => (
     <Modal visible={openPicker === key} transparent animationType="fade" onRequestClose={closePicker}>
       <View style={styles.modalRoot}>
         <Pressable style={styles.modalBackdrop} onPress={closePicker} />
@@ -464,6 +494,9 @@ export default function AddProductScreen({ userId, onGoToStockAdd, addProductFoc
                 }}
               >
                 <Text style={styles.modalRowText}>{renderLabel(item)}</Text>
+                {renderSubLabel ? (
+                  <Text style={styles.modalRowSub}>{renderSubLabel(item)}</Text>
+                ) : null}
               </TouchableOpacity>
             )}
           />
@@ -550,7 +583,10 @@ export default function AddProductScreen({ userId, onGoToStockAdd, addProductFoc
           <TouchableOpacity style={styles.backButton} onPress={closeMaterialPage}>
             <Text style={styles.backButtonText}>Geri</Text>
           </TouchableOpacity>
-          <Text style={styles.title}>{materialEditKey ? "Malzeme duzenle" : "Malzeme ekle"}</Text>
+          <Text style={[styles.title, styles.titleInHeader]}>
+            {materialEditKey ? "Malzeme duzenle" : "Malzeme ekle"}
+          </Text>
+          <GoHomeButton />
         </View>
 
         {!userId ? (
@@ -570,7 +606,12 @@ export default function AddProductScreen({ userId, onGoToStockAdd, addProductFoc
           <Text style={selectedMaterial ? styles.selectValue : styles.selectPlaceholder}>
             {stocksLoading
               ? "Stoklar yukleniyor..."
-              : selectedMaterial?.stock_name || "Stoktan malzeme seciniz"}
+              : selectedMaterial
+                ? `${formatMaterialPickerTitle(selectedMaterial)} — Stokta: ${formatStockRemaining(
+                    selectedMaterial.stock_quantity,
+                    selectedMaterial.unit_name
+                  )}`
+                : "Stoktan malzeme seciniz"}
           </Text>
           {stocksLoading ? (
             <ActivityIndicator size="small" color={COLORS.primary} />
@@ -582,17 +623,15 @@ export default function AddProductScreen({ userId, onGoToStockAdd, addProductFoc
           "material",
           "Malzeme Secimi (Stoklariniz)",
           stocks,
-          (item) => item.id,
-          (item) =>
-            item.stock_category_name
-              ? `${item.stock_name} (${item.stock_category_name})`
-              : item.stock_name || "-",
+          (item) => String(item.id),
+          formatMaterialPickerTitle,
           (item) => {
             setSelectedMaterial(item);
             if (item?.unit_name) {
               setSelectedUnit(item.unit_name);
             }
-          }
+          },
+          (item) => `Stokta: ${formatStockRemaining(item.stock_quantity, item.unit_name)}`
         )}
         {selectedMaterial ? (
           <Text style={styles.unitCostHint}>
@@ -643,13 +682,15 @@ export default function AddProductScreen({ userId, onGoToStockAdd, addProductFoc
         <Text style={[styles.title, styles.titleInHeader]} numberOfLines={2}>
           Urun Ekle
         </Text>
-        {typeof onGoToStockAdd === "function" ? (
-          <TouchableOpacity style={styles.stockAddBtn} onPress={onGoToStockAdd} activeOpacity={0.85}>
-            <Text style={styles.stockAddBtnText} numberOfLines={2}>
-              Stok ekle
-            </Text>
-          </TouchableOpacity>
-        ) : null}
+        <PageHeaderRightActions>
+          {typeof onGoToStockAdd === "function" ? (
+            <TouchableOpacity style={styles.stockAddBtn} onPress={onGoToStockAdd} activeOpacity={0.85}>
+              <Text style={styles.stockAddBtnText} numberOfLines={2}>
+                Stok ekle
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </PageHeaderRightActions>
       </View>
 
       <Text style={styles.label}>Urun adi gir</Text>
@@ -784,13 +825,18 @@ export default function AddProductScreen({ userId, onGoToStockAdd, addProductFoc
               Urun icin satis fiyati girin. Kayitli maliyet = malzemeler + (uretim saati 0 ise sadece malzeme;
               pozitif saatte saatlik sabit gider × sure eklenir).
             </Text>
-            <TextInput
-              style={styles.priceInput}
+            <KdvPriceInput
               value={salePriceInput}
-              onChangeText={setSalePriceInput}
+              onChangeValue={setSalePriceInput}
+              kdvIncluded={saleKdvIncluded}
+              onKdvIncludedChange={(v) => {
+                setSaleKdvIncluded(v);
+                if (v) setSaleKdvRate(null);
+              }}
+              selectedKdvRate={saleKdvRate}
+              onSelectedKdvRateChange={setSaleKdvRate}
+              inputStyle={styles.priceInput}
               placeholder="Orn: 125.50"
-              placeholderTextColor="#666"
-              keyboardType="decimal-pad"
             />
             <View style={styles.modalActionRow}>
               <TouchableOpacity
@@ -804,9 +850,9 @@ export default function AddProductScreen({ userId, onGoToStockAdd, addProductFoc
                 style={styles.confirmBtn}
                 disabled={savingProduct}
                 onPress={() => {
-                  const parsedPrice = Number(String(salePriceInput).replace(",", "."));
-                  if (Number.isNaN(parsedPrice) || parsedPrice < 0) {
-                    Alert.alert("Uyari", "Satis fiyati gecerli bir sayi olmali (0 veya buyuk).");
+                  const priceResolved = resolvePriceWithKdv(salePriceInput, saleKdvIncluded, saleKdvRate);
+                  if (!priceResolved.ok) {
+                    Alert.alert("Uyari", priceResolved.message || "Satis fiyatini kontrol edin.");
                     return;
                   }
                   const parsedHours = Number(String(productionHoursInput).trim().replace(",", "."));
@@ -814,7 +860,7 @@ export default function AddProductScreen({ userId, onGoToStockAdd, addProductFoc
                     Alert.alert("Uyari", "Uretim suresi saat olarak 0 veya pozitif bir sayi olmali.");
                     return;
                   }
-                  finalizeCreateProduct(pendingMaterialsPayload, parsedPrice, parsedHours);
+                  finalizeCreateProduct(pendingMaterialsPayload, priceResolved.final, parsedHours);
                 }}
               >
                 <Text style={styles.confirmBtnText}>{savingProduct ? "Kaydediliyor..." : "Kaydet"}</Text>
@@ -840,7 +886,7 @@ const styles = StyleSheet.create({
   },
   headerRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 12,
     marginTop: 8,
@@ -874,8 +920,10 @@ const styles = StyleSheet.create({
   },
   pageHeader: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 10
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 14
   },
   backButton: {
     borderWidth: 1,
@@ -979,7 +1027,13 @@ const styles = StyleSheet.create({
   },
   modalRowText: {
     color: COLORS.primary,
-    fontSize: 14
+    fontSize: 14,
+    fontWeight: "600"
+  },
+  modalRowSub: {
+    color: COLORS.textLight,
+    fontSize: 12,
+    marginTop: 4
   },
   modalHelpText: {
     color: COLORS.textLight,

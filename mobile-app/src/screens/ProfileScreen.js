@@ -10,6 +10,7 @@ import {
   ActivityIndicator
 } from "react-native";
 import { COLORS } from "../constants/colors";
+import PageTitleRow from "../components/PageTitleRow";
 import { HORIZONTAL_PADDING } from "../constants/layout";
 import { changePassword } from "../services/authService";
 
@@ -62,7 +63,7 @@ export default function ProfileScreen({ email, userId, onLogout }) {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Profil</Text>
+      <PageTitleRow title="Profil" titleStyle={styles.title} />
 
       <Text style={styles.label}>E-posta</Text>
       <View style={styles.infoBox}>

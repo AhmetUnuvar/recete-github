@@ -22,6 +22,7 @@ import {
   getPendingNotificationsForPage,
   TARGET_PAGE_MY_RECIPES
 } from "../services/notificationService";
+import PageHeaderRightActions from "../components/PageHeaderRightActions";
 
 /** Bildirim metnini bloklara böler (paragraf ve madde işaretleri). */
 const parseNoticeMessage = (raw) => {
@@ -419,13 +420,15 @@ export default function MyProductsScreen({
         <Text style={[styles.title, styles.titleInHeader]} numberOfLines={2}>
           Urun Receteleri
         </Text>
-        {typeof onAddRecipe === "function" ? (
-          <TouchableOpacity style={styles.addRecipeBtn} onPress={onAddRecipe} activeOpacity={0.85}>
-            <Text style={styles.addRecipeBtnText} numberOfLines={2}>
-              Ürün reçetesi ekle
-            </Text>
-          </TouchableOpacity>
-        ) : null}
+        <PageHeaderRightActions>
+          {typeof onAddRecipe === "function" ? (
+            <TouchableOpacity style={styles.addRecipeBtn} onPress={onAddRecipe} activeOpacity={0.85}>
+              <Text style={styles.addRecipeBtnText} numberOfLines={2}>
+                Ürün reçetesi ekle
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </PageHeaderRightActions>
       </View>
 
       {!userId ? <Text style={styles.messageText}>Urunleri gormek icin giris yapin.</Text> : null}
@@ -608,7 +611,7 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: HORIZONTAL_PADDING, paddingBottom: 24 },
   headerRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 12,
     marginTop: 8,

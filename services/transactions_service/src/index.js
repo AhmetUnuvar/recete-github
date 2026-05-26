@@ -2,6 +2,9 @@ const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
 const { createPool, initTransactionsDatabase } = require("../database/database");
+const { getCache, setCache, delCache } = require("./cache");
+
+const TTL_TX = 15; // transactions - kisa TTL, sik degisiyor
 
 const app = express();
 const port = process.env.PORT || 4006;
@@ -20,6 +23,11 @@ app.get("/transactions", async (req, res) => {
   if (!user_id) return res.status(400).json({ message: "user_id zorunlu." });
   const parsedLimit = Number(limit);
   const safeLimit = Number.isNaN(parsedLimit) || parsedLimit <= 0 ? 200 : Math.min(parsedLimit, 1000);
+
+  const cacheKey = `cache:transactions:${user_id}:${buyer_id || "none"}:${safeLimit}`;
+  const cached = await getCache(cacheKey);
+  if (cached) return res.json(cached);
+
   try {
     const buyerFilterOn = Boolean(buyer_id);
     const result = await pool.query(
@@ -34,6 +42,7 @@ app.get("/transactions", async (req, res) => {
          t.product_id,
          t.transaction_name,
          p.product_name,
+         pr.profit_amount,
          t.created_at,
          t.updated_at,
          t.deleted_at
@@ -41,6 +50,10 @@ app.get("/transactions", async (req, res) => {
        LEFT JOIN product_db p
          ON p.id = t.product_id
         AND p.user_id = t.user_id
+       LEFT JOIN profit_db pr
+         ON pr.transaction_id = t.id
+        AND pr.user_id = t.user_id
+        AND pr.deleted_at IS NULL
        WHERE t.user_id = $1
          AND ($2::boolean = FALSE OR buyer_id = $3::uuid)
          AND t.deleted_at IS NULL
@@ -48,6 +61,7 @@ app.get("/transactions", async (req, res) => {
        LIMIT $4`,
       [user_id, buyerFilterOn, buyer_id || null, safeLimit]
     );
+    await setCache(cacheKey, result.rows, TTL_TX);
     return res.json(result.rows);
   } catch (error) {
     return res.status(500).json({ message: "Islemler listelenemedi.", detail: error.message });
@@ -96,6 +110,12 @@ app.post("/transactions", async (req, res) => {
         product_id || null,
         transaction_name ? String(transaction_name).trim() : null
       ]
+    );
+    // Kisa TTL'ye ek olarak aninda gecersizlestir: buyer bazli + genel sorgular
+    await delCache(
+      `cache:transactions:${user_id}:none:200`,
+      `cache:transactions:${user_id}:none:5`,
+      buyer_id ? `cache:transactions:${user_id}:${buyer_id}:200` : null
     );
     return res.status(201).json(result.rows[0]);
   } catch (error) {

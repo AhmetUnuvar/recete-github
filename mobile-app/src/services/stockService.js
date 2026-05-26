@@ -166,6 +166,23 @@ export const createStock = async (payload) => {
   return data;
 };
 
+export const setStockAlert = async ({ userId, stockId, stockAlert }) => {
+  if (!userId || !stockId) {
+    throw new Error("Kullanici veya stok bilgisi eksik.");
+  }
+  const body = { user_id: userId, stock_alert: stockAlert };
+  const response = await fetch(`${API_BASE_URL}/stock/stocks/${encodeURIComponent(stockId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const data = await parseResponseBody(response);
+  if (!response.ok) {
+    throw new Error(data.message || "Stok uyarisi kaydedilemedi.");
+  }
+  return data;
+};
+
 export const updateStock = async ({ userId, stockId, stockName, stockQuantity, unitCost }) => {
   if (!userId || !stockId) {
     throw new Error("Kullanici veya stok bilgisi eksik.");

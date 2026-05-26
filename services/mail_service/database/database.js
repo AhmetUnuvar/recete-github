@@ -5,7 +5,7 @@ const createPool = () => {
   if (!connectionString) {
     throw new Error("DATABASE_URL is required for mail-service");
   }
-  return new Pool({ connectionString });
+  return new Pool({ connectionString, max: 25 });
 };
 
 const initMailDatabase = async (pool) => {

@@ -11,6 +11,7 @@ import {
   Alert
 } from "react-native";
 import { COLORS } from "../constants/colors";
+import PageTitleRow from "../components/PageTitleRow";
 import { HORIZONTAL_PADDING } from "../constants/layout";
 import { createFixedRecord, getFixedRecords } from "../services/financeService";
 import {
@@ -263,7 +264,7 @@ export default function FixedIncomeExpenseScreen({ userId, fixedIncomeExpenseFoc
   return (
     <>
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        <Text style={styles.title}>Sabit Gelir / Gider Ekle</Text>
+        <PageTitleRow title="Sabit Gelir / Gider Ekle" titleStyle={styles.title} />
         <Text style={styles.introText}>
           Buraya eklediğiniz aylık gider ve gelirler günlük olarak hesabınıza etki eder.
         </Text>

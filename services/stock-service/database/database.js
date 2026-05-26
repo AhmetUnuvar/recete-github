@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 
 const createPool = () => {
-  return new Pool({ connectionString: process.env.DATABASE_URL });
+  return new Pool({ connectionString: process.env.DATABASE_URL, max: 25 });
 };
 
 const runMigrations = async (pool) => {
@@ -145,6 +145,7 @@ const initStockDatabase = async (pool) => {
       )
     `);
     await pool.query("ALTER TABLE stock_db ADD COLUMN IF NOT EXISTS seller_id UUID NULL");
+    await pool.query("ALTER TABLE stock_db ADD COLUMN IF NOT EXISTS stock_alert NUMERIC(12, 3) NULL");
     await pool.query("CREATE INDEX IF NOT EXISTS idx_stock_db_user_id ON stock_db(user_id)");
     await pool.query(
       "CREATE INDEX IF NOT EXISTS idx_stock_db_category_id ON stock_db(stock_category_id)"

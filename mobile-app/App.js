@@ -12,6 +12,8 @@ import HomeScreen from "./src/screens/HomeScreen";
 import AddProductScreen from "./src/screens/AddProductScreen";
 import MyProductsScreen from "./src/screens/MyProductsScreen";
 import MyOwnedProductsScreen from "./src/screens/MyOwnedProductsScreen";
+import RetailBuyScreen from "./src/screens/RetailBuyScreen";
+import MyRetailProductsScreen from "./src/screens/MyRetailProductsScreen";
 import StockOperationsScreen from "./src/screens/StockOperationsScreen";
 import MyStocksScreen from "./src/screens/MyStocksScreen";
 import DebtsReceivablesScreen from "./src/screens/DebtsReceivablesScreen";
@@ -55,6 +57,7 @@ export default function App() {
   const [appPage, setAppPage] = useState("home");
   const [stocksRefreshNonce, setStocksRefreshNonce] = useState(0);
   const [ownedProductsRefreshNonce, setOwnedProductsRefreshNonce] = useState(0);
+  const [retailProductsRefreshNonce, setRetailProductsRefreshNonce] = useState(0);
   const [transactionsRefreshNonce, setTransactionsRefreshNonce] = useState(0);
   const [homeFocusNonce, setHomeFocusNonce] = useState(0);
   const [addProductFocusNonce, setAddProductFocusNonce] = useState(0);
@@ -333,6 +336,9 @@ export default function App() {
           if (key === "my-products") {
             setMyProductsFocusNonce((n) => n + 1);
           }
+          if (key === "my-retail-products") {
+            setRetailProductsRefreshNonce((n) => n + 1);
+          }
         }}
       >
         {appPage === "home" && (
@@ -340,6 +346,7 @@ export default function App() {
             userId={currentUserId}
             transactionsRefreshNonce={transactionsRefreshNonce}
             homeFocusNonce={homeFocusNonce}
+            onTransactionsMutated={() => setTransactionsRefreshNonce((n) => n + 1)}
           />
         )}
         {appPage === "add-product" && (
@@ -372,6 +379,22 @@ export default function App() {
               setAppPage("my-products");
               setMyProductsFocusNonce((n) => n + 1);
             }}
+          />
+        )}
+        {appPage === "retail-buy" && (
+          <RetailBuyScreen
+            userId={currentUserId}
+            onSaved={() => {
+              setRetailProductsRefreshNonce((n) => n + 1);
+              setTransactionsRefreshNonce((n) => n + 1);
+            }}
+          />
+        )}
+        {appPage === "my-retail-products" && (
+          <MyRetailProductsScreen
+            userId={currentUserId}
+            refreshNonce={retailProductsRefreshNonce}
+            onTransactionsMutated={() => setTransactionsRefreshNonce((n) => n + 1)}
           />
         )}
         {appPage === "stock-ops" && (
@@ -417,7 +440,11 @@ export default function App() {
           />
         )}
         {appPage === "customers" && (
-          <CustomersScreen userId={currentUserId} customersFocusNonce={customersFocusNonce} />
+          <CustomersScreen
+            userId={currentUserId}
+            customersFocusNonce={customersFocusNonce}
+            onTransactionsMutated={() => setTransactionsRefreshNonce((n) => n + 1)}
+          />
         )}
         {appPage === "profile" && (
           <ProfileScreen

@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 
 const createPool = () => {
-  return new Pool({ connectionString: process.env.DATABASE_URL });
+  return new Pool({ connectionString: process.env.DATABASE_URL, max: 25 });
 };
 
 const runMigrations = async (pool) => {
@@ -89,6 +89,9 @@ const initProductDatabase = async (pool) => {
     await pool.query(`
       ALTER TABLE product_db ADD COLUMN IF NOT EXISTS total_hours NUMERIC(14, 4) NOT NULL DEFAULT 1
     `);
+    await pool.query(`
+      ALTER TABLE product_db ADD COLUMN IF NOT EXISTS product_alert NUMERIC(12, 3) NULL
+    `);
     await pool.query(
       `UPDATE product_db SET material_cost_total = 0 WHERE material_cost_total IS NULL`
     );
@@ -139,6 +142,47 @@ const initProductDatabase = async (pool) => {
       console.log("[product-service][database] owned_product_db zaten mevcut, baglandi.");
     } else {
       console.log("[product-service][database] owned_product_db tablosu olusturuldu.");
+    }
+
+    const retailExistsResult = await pool.query(
+      "SELECT to_regclass('public.retail_db') IS NOT NULL AS exists"
+    );
+    const retailTableExists = retailExistsResult.rows[0]?.exists === true;
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS retail_db (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL,
+        retail_name VARCHAR(200) NOT NULL,
+        retail_quantity NUMERIC(14, 4) NOT NULL DEFAULT 0,
+        retail_price NUMERIC(14, 4) NOT NULL DEFAULT 0,
+        retail_seller_price NUMERIC(14, 4) NOT NULL DEFAULT 0,
+        unit_id UUID NULL,
+        customer_id UUID NULL,
+        seller_id UUID NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        deleted_at TIMESTAMPTZ NULL
+      )
+    `);
+
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_retail_db_user_id ON retail_db(user_id)");
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_retail_db_user_alive
+      ON retail_db(user_id)
+      WHERE deleted_at IS NULL
+    `);
+    await pool.query(`ALTER TABLE retail_db ADD COLUMN IF NOT EXISTS unit_id UUID NULL`);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_retail_db_unit_id
+      ON retail_db(unit_id)
+      WHERE deleted_at IS NULL
+    `);
+
+    if (retailTableExists) {
+      console.log("[product-service][database] retail_db zaten mevcut, baglandi.");
+    } else {
+      console.log("[product-service][database] retail_db tablosu olusturuldu.");
     }
 
     await runMigrations(pool);

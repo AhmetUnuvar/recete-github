@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -7,12 +7,14 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Modal,
-  Pressable
+  Pressable,
+  TextInput,
+  Alert
 } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { COLORS } from "../constants/colors";
 import { HORIZONTAL_PADDING } from "../constants/layout";
-import { getTransactions } from "../services/transactionsService";
+import { createTransaction, getTransactions } from "../services/transactionsService";
 import {
   dismissNotification,
   getPendingNotificationsForPage,
@@ -55,7 +57,24 @@ const parseNoticeMessage = (raw) => {
   return blocks;
 };
 
-export default function HomeScreen({ userId, transactionsRefreshNonce = 0, homeFocusNonce = 0 }) {
+const formatTransactionDateTime = (raw) => {
+  const dt = new Date(raw);
+  if (Number.isNaN(dt.getTime())) {
+    return { date: "-", time: "-", day: "-" };
+  }
+  return {
+    date: dt.toLocaleDateString("tr-TR"),
+    time: dt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }),
+    day: dt.toLocaleDateString("tr-TR", { weekday: "long" })
+  };
+};
+
+export default function HomeScreen({
+  userId,
+  transactionsRefreshNonce = 0,
+  homeFocusNonce = 0,
+  onTransactionsMutated
+}) {
   const [period, setPeriod] = useState("daily");
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -64,6 +83,13 @@ export default function HomeScreen({ userId, transactionsRefreshNonce = 0, homeF
   const [welcomeModalOpen, setWelcomeModalOpen] = useState(false);
   const [welcomeCloseLoading, setWelcomeCloseLoading] = useState(false);
   const [dontShowWelcomeAgain, setDontShowWelcomeAgain] = useState(false);
+  const [showIncomeModal, setShowIncomeModal] = useState(false);
+  const [showExpenseModal, setShowExpenseModal] = useState(false);
+  const [incomeName, setIncomeName] = useState("");
+  const [incomeAmount, setIncomeAmount] = useState("");
+  const [expenseName, setExpenseName] = useState("");
+  const [expenseAmount, setExpenseAmount] = useState("");
+  const [savingTxn, setSavingTxn] = useState(false);
 
   const periodOptions = [
     { key: "daily", label: "Gunluk Kar/Zarar" },
@@ -72,27 +98,98 @@ export default function HomeScreen({ userId, transactionsRefreshNonce = 0, homeF
     { key: "yearly", label: "Yillik Kar/Zarar" }
   ];
 
+  const reloadTransactions = useCallback(async () => {
+    if (!userId) {
+      setTransactions([]);
+      setMessage("Giris yapilmamis.");
+      return;
+    }
+    try {
+      setLoading(true);
+      setMessage("");
+      const rows = await getTransactions(userId, 1000);
+      setTransactions(rows);
+    } catch (error) {
+      setTransactions([]);
+      setMessage(error.message || "Islemler yuklenemedi.");
+    } finally {
+      setLoading(false);
+    }
+  }, [userId]);
+
   useEffect(() => {
-    const load = async () => {
-      if (!userId) {
-        setTransactions([]);
-        setMessage("Giris yapilmamis.");
-        return;
+    reloadTransactions();
+  }, [reloadTransactions, transactionsRefreshNonce]);
+
+  const submitStandaloneIncome = async () => {
+    const amount = Number(String(incomeAmount || "").replace(",", "."));
+    const name = String(incomeName || "").trim();
+    if (!userId) {
+      Alert.alert("Uyari", "Giris yapmaniz gerekiyor.");
+      return;
+    }
+    if (Number.isNaN(amount) || amount <= 0 || !name) {
+      Alert.alert("Uyari", "Gelir adi ve gecerli bir tutar giriniz.");
+      return;
+    }
+    try {
+      setSavingTxn(true);
+      await createTransaction({
+        userId,
+        amount,
+        isIncome: true,
+        buyerId: null,
+        transactionName: name
+      });
+      setShowIncomeModal(false);
+      setIncomeName("");
+      setIncomeAmount("");
+      await reloadTransactions();
+      if (typeof onTransactionsMutated === "function") {
+        onTransactionsMutated();
       }
-      try {
-        setLoading(true);
-        setMessage("");
-        const rows = await getTransactions(userId, 1000);
-        setTransactions(rows);
-      } catch (error) {
-        setTransactions([]);
-        setMessage(error.message || "Islemler yuklenemedi.");
-      } finally {
-        setLoading(false);
+      Alert.alert("Basarili", "Gelir kaydedildi.");
+    } catch (error) {
+      Alert.alert("Hata", error.message || "Gelir kaydedilemedi.");
+    } finally {
+      setSavingTxn(false);
+    }
+  };
+
+  const submitStandaloneExpense = async () => {
+    const amount = Number(String(expenseAmount || "").replace(",", "."));
+    const name = String(expenseName || "").trim();
+    if (!userId) {
+      Alert.alert("Uyari", "Giris yapmaniz gerekiyor.");
+      return;
+    }
+    if (Number.isNaN(amount) || amount <= 0 || !name) {
+      Alert.alert("Uyari", "Gider adi ve gecerli bir tutar giriniz.");
+      return;
+    }
+    try {
+      setSavingTxn(true);
+      await createTransaction({
+        userId,
+        amount,
+        isIncome: false,
+        buyerId: null,
+        transactionName: name
+      });
+      setShowExpenseModal(false);
+      setExpenseName("");
+      setExpenseAmount("");
+      await reloadTransactions();
+      if (typeof onTransactionsMutated === "function") {
+        onTransactionsMutated();
       }
-    };
-    load();
-  }, [userId, transactionsRefreshNonce]);
+      Alert.alert("Basarili", "Gider kaydedildi.");
+    } catch (error) {
+      Alert.alert("Hata", error.message || "Gider kaydedilemedi.");
+    } finally {
+      setSavingTxn(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -195,8 +292,9 @@ export default function HomeScreen({ userId, transactionsRefreshNonce = 0, homeF
             minimumFractionDigits: 0,
             maximumFractionDigits: 2
           })} TL`;
-      const dt = new Date(item.transaction_time || item.created_at);
-      const dateTxt = Number.isNaN(dt.getTime()) ? "-" : dt.toLocaleDateString("tr-TR");
+      const { date, time, day } = formatTransactionDateTime(
+        item.transaction_time || item.created_at
+      );
       const txTitle = item.product_name
         ? `Urun Satisi: ${item.product_name}`
         : item.transaction_name || (item.is_income ? "Gelir islemi" : "Gider islemi");
@@ -205,7 +303,9 @@ export default function HomeScreen({ userId, transactionsRefreshNonce = 0, homeF
         type: item.is_income ? "income" : "expense",
         title: txTitle,
         amount: amountTxt,
-        date: dateTxt
+        date,
+        time,
+        day
       };
     });
   }, [transactions]);
@@ -227,6 +327,35 @@ export default function HomeScreen({ userId, transactionsRefreshNonce = 0, homeF
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Ana Sayfa</Text>
+
+      <View style={styles.quickActionsRow}>
+        <TouchableOpacity
+          style={[styles.quickActionBtn, styles.incomeQuickBtn]}
+          onPress={() => {
+            if (!userId) {
+              Alert.alert("Uyari", "Giris yapmaniz gerekiyor.");
+              return;
+            }
+            setShowIncomeModal(true);
+          }}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.quickActionBtnText}>Gelir Ekle</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.quickActionBtn, styles.expenseQuickBtn]}
+          onPress={() => {
+            if (!userId) {
+              Alert.alert("Uyari", "Giris yapmaniz gerekiyor.");
+              return;
+            }
+            setShowExpenseModal(true);
+          }}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.quickActionBtnText}>Gider Ekle</Text>
+        </TouchableOpacity>
+      </View>
 
       {message ? <Text style={styles.infoText}>{message}</Text> : null}
       {loading ? <ActivityIndicator size="small" color={COLORS.primary} style={styles.loader} /> : null}
@@ -326,7 +455,10 @@ export default function HomeScreen({ userId, transactionsRefreshNonce = 0, homeF
           <View key={item.id} style={styles.transactionRow}>
             <View>
               <Text style={styles.transactionTitle}>{item.title}</Text>
-              <Text style={styles.transactionDate}>{item.date}</Text>
+              <Text style={styles.transactionDate}>
+                {item.date} · {item.time}
+              </Text>
+              <Text style={styles.transactionDay}>{item.day}</Text>
             </View>
             <Text
               style={[
@@ -342,6 +474,86 @@ export default function HomeScreen({ userId, transactionsRefreshNonce = 0, homeF
           <Text style={styles.transactionDate}>Henuz islem yok.</Text>
         ) : null}
       </View>
+
+      <Modal
+        visible={showIncomeModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !savingTxn && setShowIncomeModal(false)}
+      >
+        <View style={styles.txModalRoot}>
+          <Pressable
+            style={styles.txModalBackdrop}
+            onPress={() => !savingTxn && setShowIncomeModal(false)}
+          />
+          <View style={styles.txModalSheet}>
+            <Text style={styles.txModalTitle}>Gelir Ekle</Text>
+            <Text style={styles.txModalHint}>Musteri veya urun satisi olmadan genel gelir kaydi.</Text>
+            <TextInput
+              style={styles.txInput}
+              value={incomeName}
+              onChangeText={setIncomeName}
+              placeholder="Gelir adi (orn: Nakit tahsilat)"
+              placeholderTextColor="#666"
+            />
+            <TextInput
+              style={styles.txInput}
+              value={incomeAmount}
+              onChangeText={setIncomeAmount}
+              placeholder="Tutar"
+              placeholderTextColor="#666"
+              keyboardType="decimal-pad"
+            />
+            <TouchableOpacity
+              style={styles.txSaveBtn}
+              onPress={submitStandaloneIncome}
+              disabled={savingTxn}
+            >
+              <Text style={styles.txSaveBtnText}>{savingTxn ? "Kaydediliyor..." : "Kaydet"}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showExpenseModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !savingTxn && setShowExpenseModal(false)}
+      >
+        <View style={styles.txModalRoot}>
+          <Pressable
+            style={styles.txModalBackdrop}
+            onPress={() => !savingTxn && setShowExpenseModal(false)}
+          />
+          <View style={styles.txModalSheet}>
+            <Text style={styles.txModalTitle}>Gider Ekle</Text>
+            <Text style={styles.txModalHint}>Musteri veya stok islemi olmadan genel gider kaydi.</Text>
+            <TextInput
+              style={styles.txInput}
+              value={expenseName}
+              onChangeText={setExpenseName}
+              placeholder="Gider adi (orn: Kira odemesi)"
+              placeholderTextColor="#666"
+            />
+            <TextInput
+              style={styles.txInput}
+              value={expenseAmount}
+              onChangeText={setExpenseAmount}
+              placeholder="Tutar"
+              placeholderTextColor="#666"
+              keyboardType="decimal-pad"
+            />
+            <TouchableOpacity
+              style={styles.txSaveBtn}
+              onPress={submitStandaloneExpense}
+              disabled={savingTxn}
+            >
+              <Text style={styles.txSaveBtnText}>{savingTxn ? "Kaydediliyor..." : "Kaydet"}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={welcomeModalOpen && welcomeNotif != null} transparent animationType="fade">
         <View style={styles.welcomeModalRoot}>
@@ -422,6 +634,81 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontWeight: "800",
     marginBottom: 14
+  },
+  quickActionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 14
+  },
+  quickActionBtn: {
+    flex: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+    borderWidth: 1.5
+  },
+  incomeQuickBtn: {
+    borderColor: "#42d96b",
+    backgroundColor: "rgba(66, 217, 107, 0.12)"
+  },
+  expenseQuickBtn: {
+    borderColor: "#ff5f5f",
+    backgroundColor: "rgba(255, 95, 95, 0.12)"
+  },
+  quickActionBtnText: {
+    color: COLORS.primary,
+    fontSize: 14,
+    fontWeight: "700"
+  },
+  txModalRoot: {
+    flex: 1,
+    justifyContent: "center"
+  },
+  txModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.55)"
+  },
+  txModalSheet: {
+    marginHorizontal: HORIZONTAL_PADDING,
+    backgroundColor: COLORS.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 16
+  },
+  txModalTitle: {
+    color: COLORS.primary,
+    fontSize: 18,
+    fontWeight: "800",
+    marginBottom: 6
+  },
+  txModalHint: {
+    color: COLORS.textLight,
+    fontSize: 12,
+    marginBottom: 12,
+    lineHeight: 17
+  },
+  txInput: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: COLORS.primary,
+    fontSize: 14,
+    marginBottom: 12,
+    backgroundColor: COLORS.black
+  },
+  txSaveBtn: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center"
+  },
+  txSaveBtnText: {
+    color: COLORS.black,
+    fontSize: 14,
+    fontWeight: "800"
   },
   infoText: {
     color: COLORS.textLight,
@@ -545,6 +832,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     opacity: 0.7,
     marginTop: 2
+  },
+  transactionDay: {
+    color: COLORS.textLight,
+    fontSize: 11,
+    opacity: 0.65,
+    marginTop: 1,
+    textTransform: "capitalize"
   },
   transactionAmount: {
     fontSize: 14,

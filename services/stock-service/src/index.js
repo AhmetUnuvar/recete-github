@@ -2,6 +2,11 @@ const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
 const { createPool, initStockDatabase } = require("../database/database");
+const { getCache, setCache, delCache } = require("./cache");
+
+const TTL_GLOBAL = 3600;   // items, currencies
+const TTL_USER_LONG = 1800; // categories, units, sellers
+const TTL_USER = 30;        // stocks
 
 const app = express();
 const port = process.env.PORT || 4002;
@@ -39,7 +44,11 @@ app.get("/health", (_req, res) => {
 });
 
 app.get("/items", async (_req, res) => {
+  const cacheKey = "cache:items";
+  const cached = await getCache(cacheKey);
+  if (cached) return res.json(cached);
   const result = await pool.query("SELECT * FROM stock_items ORDER BY id DESC");
+  await setCache(cacheKey, result.rows, TTL_GLOBAL);
   res.json(result.rows);
 });
 
@@ -48,6 +57,10 @@ app.get("/categories", async (req, res) => {
   if (!user_id) {
     return res.status(400).json({ message: "user_id zorunlu" });
   }
+
+  const cacheKey = `cache:categories:${user_id}`;
+  const cached = await getCache(cacheKey);
+  if (cached) return res.json(cached);
 
   try {
     const result = await pool.query(
@@ -59,6 +72,7 @@ app.get("/categories", async (req, res) => {
       ,
       [user_id]
     );
+    await setCache(cacheKey, result.rows, TTL_USER_LONG);
     return res.json(result.rows);
   } catch (error) {
     console.error("[stock-service][categories] listeleme hatasi:", error.message);
@@ -72,6 +86,10 @@ app.get("/units", async (req, res) => {
     return res.status(400).json({ message: "user_id zorunlu" });
   }
 
+  const cacheKey = `cache:units:${user_id}`;
+  const cached = await getCache(cacheKey);
+  if (cached) return res.json(cached);
+
   try {
     const result = await pool.query(
       `SELECT id, user_id, unit_name, is_default, created_at
@@ -81,6 +99,7 @@ app.get("/units", async (req, res) => {
        ORDER BY created_at DESC`,
       [user_id]
     );
+    await setCache(cacheKey, result.rows, TTL_USER_LONG);
     return res.json(result.rows);
   } catch (error) {
     console.error("[stock-service][units] listeleme hatasi:", error.message);
@@ -89,6 +108,9 @@ app.get("/units", async (req, res) => {
 });
 
 app.get("/currencies", async (_req, res) => {
+  const cacheKey = "cache:currencies";
+  const cached = await getCache(cacheKey);
+  if (cached) return res.json(cached);
   try {
     const result = await pool.query(
       `SELECT id, currency_name, currency_abbreviation, created_at
@@ -96,6 +118,7 @@ app.get("/currencies", async (_req, res) => {
        WHERE deleted_at IS NULL
        ORDER BY created_at DESC`
     );
+    await setCache(cacheKey, result.rows, TTL_GLOBAL);
     return res.json(result.rows);
   } catch (error) {
     console.error("[stock-service][currencies] listeleme hatasi:", error.message);
@@ -108,6 +131,9 @@ app.get("/sellers", async (req, res) => {
   if (!user_id) {
     return res.status(400).json({ message: "user_id zorunlu" });
   }
+  const cacheKey = `cache:sellers:${user_id}`;
+  const cached = await getCache(cacheKey);
+  if (cached) return res.json(cached);
   try {
     const result = await pool.query(
       `SELECT id, user_id, seller_name, created_at, updated_at, deleted_at
@@ -117,6 +143,7 @@ app.get("/sellers", async (req, res) => {
        ORDER BY created_at DESC`,
       [user_id]
     );
+    await setCache(cacheKey, result.rows, TTL_USER_LONG);
     return res.json(result.rows);
   } catch (error) {
     console.error("[stock-service][sellers] listeleme hatasi:", error.message);
@@ -136,6 +163,7 @@ app.post("/sellers", async (req, res) => {
        RETURNING id, user_id, seller_name, created_at, updated_at, deleted_at`,
       [user_id, String(seller_name).trim()]
     );
+    await delCache(`cache:sellers:${user_id}`);
     return res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error("[stock-service][sellers] olusturma hatasi:", error.message);
@@ -149,6 +177,10 @@ const listStocksHandler = async (req, res) => {
     return res.status(400).json({ message: "user_id zorunlu" });
   }
 
+  const cacheKey = `cache:stocks:${user_id}`;
+  const cached = await getCache(cacheKey);
+  if (cached) return res.json(cached);
+
   try {
     const result = await pool.query(
       `SELECT
@@ -156,6 +188,7 @@ const listStocksHandler = async (req, res) => {
         s.user_id,
         s.stock_name,
         s.stock_quantity,
+        s.stock_alert,
         s.unit_cost,
         s.seller_id,
         s.created_at,
@@ -174,6 +207,7 @@ const listStocksHandler = async (req, res) => {
       ORDER BY s.created_at DESC`,
       [user_id]
     );
+    await setCache(cacheKey, result.rows, TTL_USER);
     return res.json(result.rows);
   } catch (error) {
     console.error("[stock-service][stocks] listeleme hatasi:", error.message);
@@ -201,6 +235,7 @@ app.post("/categories", async (req, res) => {
       id: result.rows[0].id,
       stock_category_name: result.rows[0].stock_category_name
     });
+    await delCache(`cache:categories:${user_id}`);
     return res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error("[stock-service][categories] kategori olusturma hatasi:", error.message);
@@ -225,6 +260,7 @@ app.post("/units", async (req, res) => {
       id: result.rows[0].id,
       unit_name: result.rows[0].unit_name
     });
+    await delCache(`cache:units:${user_id}`);
     return res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error("[stock-service][units] birim olusturma hatasi:", error.message);
@@ -399,6 +435,7 @@ const createStockHandler = async (req, res) => {
         console.error("[stock-service][stocks] borc kaydi hatasi:", liabError.message);
       }
     }
+    await delCache(`cache:stocks:${user_id}`);
     return res.status(201).json(insertResult.rows[0]);
   } catch (error) {
     await client.query("ROLLBACK");
@@ -478,12 +515,13 @@ const consumeStockHandler = async (req, res) => {
   } catch (txError) {
     console.error("[stock-service][consume] transactions kaydi hatasi:", txError.message);
   }
+  await delCache(`cache:stocks:${user_id}`);
   return res.json({ ok: true, stock_id: stockId, quantity: parsedQty, amount: expenseAmount });
 };
 
 const updateStockHandler = async (req, res) => {
   const stockId = req.params.id;
-  const { user_id, stock_name, stock_quantity, unit_cost } = req.body || {};
+  const { user_id, stock_name, stock_quantity, unit_cost, stock_alert: stock_alert_raw } = req.body || {};
 
   if (!user_id || !stockId) {
     return res.status(400).json({ message: "user_id ve stok id zorunlu." });
@@ -491,7 +529,7 @@ const updateStockHandler = async (req, res) => {
 
   try {
     const existingResult = await pool.query(
-      `SELECT id, stock_name, stock_quantity, unit_cost
+      `SELECT id, stock_name, stock_quantity, unit_cost, stock_alert
        FROM stock_db
        WHERE id = $1::uuid AND user_id = $2 AND deleted_at IS NULL
        LIMIT 1`,
@@ -514,17 +552,33 @@ const updateStockHandler = async (req, res) => {
       return res.status(400).json({ message: "Miktar ve maliyet gecerli sayi olmali (0 veya buyuk)." });
     }
 
+    const hasAlertField = Object.prototype.hasOwnProperty.call(req.body || {}, "stock_alert");
+    let nextAlert = current.stock_alert;
+    if (hasAlertField) {
+      if (stock_alert_raw === null || stock_alert_raw === "") {
+        nextAlert = null;
+      } else {
+        const parsedAlert = Number(stock_alert_raw);
+        if (Number.isNaN(parsedAlert) || parsedAlert < 0) {
+          return res.status(400).json({ message: "stock_alert gecerli bir sayi olmali (0 veya buyuk)." });
+        }
+        nextAlert = parsedAlert;
+      }
+    }
+
     const updateResult = await pool.query(
       `UPDATE stock_db
        SET stock_name = $1,
            stock_quantity = $2::numeric,
            unit_cost = $3::numeric,
+           stock_alert = $4::numeric,
            updated_at = NOW()
-       WHERE id = $4::uuid AND user_id = $5 AND deleted_at IS NULL
-       RETURNING id, user_id, stock_name, stock_quantity, unit_cost, updated_at`,
-      [nextName, nextQty, nextCost, stockId, user_id]
+       WHERE id = $5::uuid AND user_id = $6 AND deleted_at IS NULL
+       RETURNING id, user_id, stock_name, stock_quantity, stock_alert, unit_cost, updated_at`,
+      [nextName, nextQty, nextCost, nextAlert, stockId, user_id]
     );
 
+    await delCache(`cache:stocks:${user_id}`);
     return res.json(updateResult.rows[0]);
   } catch (error) {
     console.error("[stock-service][stocks] stok guncelleme hatasi:", error.message);
@@ -552,6 +606,7 @@ const deleteStockHandler = async (req, res) => {
     if (deleteResult.rowCount === 0) {
       return res.status(404).json({ message: "Stok bulunamadi." });
     }
+    await delCache(`cache:stocks:${user_id}`);
     return res.json({ ok: true, message: "Stok silindi." });
   } catch (error) {
     console.error("[stock-service][stocks] stok silme hatasi:", error.message);

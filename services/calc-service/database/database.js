@@ -2,7 +2,7 @@ const { Pool } = require("pg");
 const fs = require("fs");
 const path = require("path");
 
-const createPool = () => new Pool({ connectionString: process.env.DATABASE_URL });
+const createPool = () => new Pool({ connectionString: process.env.DATABASE_URL, max: 25 });
 
 const runMigrations = async (pool) => {
   const migrationsDir = path.join(__dirname, "..", "migrations");
@@ -68,6 +68,35 @@ const initCalcDatabase = async (pool) => {
       )
     `);
 
+    const kdvExistsResult = await pool.query(
+      "SELECT to_regclass('public.kdv_table') IS NOT NULL AS exists"
+    );
+    const kdvTableExistedBefore = kdvExistsResult.rows[0]?.exists === true;
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS kdv_table (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        kdv_rate NUMERIC(5, 2) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        deleted_at TIMESTAMPTZ NULL
+      )
+    `);
+
+    await pool.query(
+      "CREATE UNIQUE INDEX IF NOT EXISTS uniq_kdv_table_rate_alive ON kdv_table(kdv_rate) WHERE deleted_at IS NULL"
+    );
+
+    await pool.query(`
+      INSERT INTO kdv_table (id, kdv_rate)
+      SELECT gen_random_uuid(), v.rate
+      FROM (VALUES (0::numeric), (1::numeric), (10::numeric), (20::numeric)) AS v(rate)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM kdv_table k
+        WHERE k.kdv_rate = v.rate AND k.deleted_at IS NULL
+      )
+    `);
+
     await pool.query(
       "CREATE INDEX IF NOT EXISTS idx_profit_db_user_id ON profit_db(user_id)"
     );
@@ -87,6 +116,12 @@ const initCalcDatabase = async (pool) => {
       console.log("[calc-service][database] profit_db zaten mevcut, baglandi.");
     } else {
       console.log("[calc-service][database] profit_db tablosu olusturuldu.");
+    }
+
+    if (kdvTableExistedBefore) {
+      console.log("[calc-service][database] kdv_table zaten mevcut, baglandi.");
+    } else {
+      console.log("[calc-service][database] kdv_table tablosu olusturuldu.");
     }
   } catch (error) {
     console.error("[calc-service][database] Baslatma hatasi:", error.message);

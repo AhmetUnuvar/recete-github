@@ -2,7 +2,7 @@ const { Pool } = require("pg");
 const fs = require("fs");
 const path = require("path");
 
-const createPool = () => new Pool({ connectionString: process.env.DATABASE_URL });
+const createPool = () => new Pool({ connectionString: process.env.DATABASE_URL, max: 25 });
 
 const runMigrations = async (pool) => {
   const migrationsDir = path.join(__dirname, "..", "migrations");
@@ -84,6 +84,30 @@ const initCustomerDatabase = async (pool) => {
       console.log("[customer-service][database] customers_db zaten mevcut, baglandi.");
     } else {
       console.log("[customer-service][database] customers_db tablosu olusturuldu.");
+    }
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS cities_db (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        city_name VARCHAR(120) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        deleted_at TIMESTAMPTZ NULL
+      )
+    `);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_cities_db_city_name_alive
+      ON cities_db (LOWER(city_name))
+      WHERE deleted_at IS NULL
+    `);
+
+    const citiesExists = await pool.query(
+      "SELECT to_regclass('public.cities_db') IS NOT NULL AS exists"
+    );
+    if (citiesExists.rows[0]?.exists === true) {
+      console.log("[customer-service][database] cities_db hazir.");
+    } else {
+      console.log("[customer-service][database] cities_db tablosu olusturuldu.");
     }
 
     await runMigrations(pool);

@@ -17,6 +17,15 @@ const formatErrorMessage = (data, fallback) => {
     : msg || fallback;
 };
 
+export const getCities = async () => {
+  const response = await fetch(`${API_BASE_URL}/customer/cities`);
+  const data = await parseResponseBody(response);
+  if (!response.ok) {
+    throw new Error(formatErrorMessage(data, "Şehirler getirilemedi."));
+  }
+  return Array.isArray(data) ? data : [];
+};
+
 export const getCustomers = async (userId, options = {}) => {
   if (!userId) {
     throw new Error("Kullanici bilgisi bulunamadi. Lutfen tekrar giris yapin.");
@@ -71,7 +80,10 @@ export const createCustomer = async (userId, payload) => {
       customer_id_number: payload.customer_id_number,
       customer_phone: payload.customer_phone,
       current_name: payload.current_name,
-      customer_company_name: payload.customer_company_name
+      customer_company_name: payload.customer_company_name,
+      customer_city: payload.customer_city || null,
+      customer_district: payload.customer_district,
+      customer_address: payload.customer_address
     })
   });
   const data = await parseResponseBody(response);
@@ -97,7 +109,10 @@ export const updateCustomer = async (userId, customerId, payload) => {
       customer_id_number: payload.customer_id_number,
       customer_phone: payload.customer_phone,
       current_name: payload.current_name,
-      customer_company_name: payload.customer_company_name
+      customer_company_name: payload.customer_company_name,
+      customer_city: payload.customer_city || null,
+      customer_district: payload.customer_district,
+      customer_address: payload.customer_address
     })
   });
   const data = await parseResponseBody(response);

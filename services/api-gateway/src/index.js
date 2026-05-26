@@ -1,10 +1,15 @@
 const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
+const http = require("http");
 const { createProxyMiddleware } = require("http-proxy-middleware");
 
 const app = express();
 const port = process.env.PORT || 4000;
+
+// Her hedef servis için ayrı keep-alive agent — TCP el sıkışma maliyetini ortadan kaldırır
+const makeAgent = () =>
+  new http.Agent({ keepAlive: true, maxSockets: 200, maxFreeSockets: 20, timeout: 30000 });
 
 const authService = process.env.AUTH_SERVICE_URL || "http://localhost:4001";
 const mailService = process.env.MAIL_SERVICE_URL || "http://localhost:4011";
@@ -32,6 +37,7 @@ const createServiceProxy = (pathPrefix, target, pathRewriteRule) =>
     changeOrigin: true,
     proxyTimeout: 15000,
     timeout: 15000,
+    agent: makeAgent(),
     ...(pathRewriteRule ? { pathRewrite: pathRewriteRule } : {}),
     onError: (err, req, res) => {
       console.error(`[api-gateway] proxy error for ${req.method} ${req.originalUrl}:`, err.message);

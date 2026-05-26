@@ -13,13 +13,14 @@ import {
 } from "react-native";
 import { COLORS } from "../constants/colors";
 import { HORIZONTAL_PADDING } from "../constants/layout";
-import { deleteStock, getStocks, updateStock } from "../services/stockService";
+import { deleteStock, getStocks, setStockAlert, updateStock } from "../services/stockService";
 import { exportAndShareTable } from "../services/tableMakerService";
 import {
   dismissNotification,
   getPendingNotificationsForPage,
   TARGET_PAGE_MY_STOCKS
 } from "../services/notificationService";
+import PageHeaderRightActions from "../components/PageHeaderRightActions";
 
 /** Bildirim metnini bloklara böler (paragraf ve madde işaretleri). */
 const parseNoticeMessage = (raw) => {
@@ -59,6 +60,21 @@ const parseNoticeMessage = (raw) => {
 
 const TIME_FILTERS = ["Bugun", "Bu Hafta", "Bu Ay", "Bu Yil", "Ozel Aralik"];
 const DEFAULT_CATEGORY_FILTER = "Tum Kategoriler";
+
+const parseAlertThreshold = (raw) => {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+};
+
+const isStockLow = (item) => {
+  const threshold = parseAlertThreshold(item?.stock_alert);
+  if (threshold === null) return false;
+  const qty = Number(item?.stock_quantity);
+  if (!Number.isFinite(qty)) return false;
+  return qty <= threshold;
+};
 
 const parseTrDate = (value) => {
   const raw = String(value || "").trim();
@@ -157,6 +173,9 @@ export default function MyStocksScreen({ userId, stocksRefreshNonce = 0, myStock
   const [myStocksNoticeModalOpen, setMyStocksNoticeModalOpen] = useState(false);
   const [myStocksNoticeCloseLoading, setMyStocksNoticeCloseLoading] = useState(false);
   const [dontShowMyStocksNoticeAgain, setDontShowMyStocksNoticeAgain] = useState(false);
+  const [alertStock, setAlertStock] = useState(null);
+  const [alertThresholdInput, setAlertThresholdInput] = useState("");
+  const [savingAlert, setSavingAlert] = useState(false);
 
   const closePicker = () => setOpenPicker(null);
   const closeEditModal = () => {
@@ -363,6 +382,57 @@ export default function MyStocksScreen({ userId, stocksRefreshNonce = 0, myStock
       Alert.alert("Hata", error.message || "Stok guncellenemedi.");
     } finally {
       setSavingEdit(false);
+    }
+  };
+
+  const closeAlertModal = () => {
+    if (savingAlert) return;
+    setAlertStock(null);
+    setAlertThresholdInput("");
+  };
+
+  const openAlertModal = (item) => {
+    setAlertStock(item);
+    const existing = item?.stock_alert;
+    setAlertThresholdInput(
+      existing !== null && existing !== undefined && !Number.isNaN(Number(existing))
+        ? String(existing)
+        : ""
+    );
+  };
+
+  const onSaveStockAlert = async () => {
+    if (!alertStock?.id || !userId) return;
+    const threshold = Number(String(alertThresholdInput || "").replace(",", "."));
+    if (Number.isNaN(threshold) || threshold < 0) {
+      Alert.alert("Uyari", "Gecerli bir uyari esigi giriniz (0 veya buyuk).");
+      return;
+    }
+    try {
+      setSavingAlert(true);
+      await setStockAlert({ userId, stockId: alertStock.id, stockAlert: threshold });
+      closeAlertModal();
+      await loadStocks();
+      Alert.alert("Basarili", "Stok uyarisi kaydedildi.");
+    } catch (error) {
+      Alert.alert("Hata", error.message || "Stok uyarisi kaydedilemedi.");
+    } finally {
+      setSavingAlert(false);
+    }
+  };
+
+  const onClearStockAlert = async () => {
+    if (!alertStock?.id || !userId) return;
+    try {
+      setSavingAlert(true);
+      await setStockAlert({ userId, stockId: alertStock.id, stockAlert: null });
+      closeAlertModal();
+      await loadStocks();
+      Alert.alert("Basarili", "Stok uyarisi kaldirildi.");
+    } catch (error) {
+      Alert.alert("Hata", error.message || "Stok uyarisi kaldirilamadi.");
+    } finally {
+      setSavingAlert(false);
     }
   };
 
@@ -584,13 +654,15 @@ export default function MyStocksScreen({ userId, stocksRefreshNonce = 0, myStock
         <Text style={[styles.title, styles.titleInHeader]} numberOfLines={2}>
           Stoklarim
         </Text>
-        {typeof onGoToStockAdd === "function" ? (
-          <TouchableOpacity style={styles.stockAddBtn} onPress={onGoToStockAdd} activeOpacity={0.85}>
-            <Text style={styles.stockAddBtnText} numberOfLines={2}>
-              Stok ekle
-            </Text>
-          </TouchableOpacity>
-        ) : null}
+        <PageHeaderRightActions>
+          {typeof onGoToStockAdd === "function" ? (
+            <TouchableOpacity style={styles.stockAddBtn} onPress={onGoToStockAdd} activeOpacity={0.85}>
+              <Text style={styles.stockAddBtnText} numberOfLines={2}>
+                Stok ekle
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </PageHeaderRightActions>
       </View>
 
       <View style={styles.searchBarWrap}>
@@ -681,9 +753,25 @@ export default function MyStocksScreen({ userId, stocksRefreshNonce = 0, myStock
               <Text style={styles.emptyText}>Gosterilecek stok bulunamadi.</Text>
             </View>
           ) : (
-            filteredStocks.map((item) => (
+            filteredStocks.map((item) => {
+              const lowStock = isStockLow(item);
+              return (
               <View key={item.id} style={styles.dataRow}>
-                <Text style={[styles.dataCell, styles.nameCell]}>{item.stock_name || "-"}</Text>
+                <View style={[styles.dataCell, styles.nameCell, styles.nameCellWrap]}>
+                  {lowStock ? (
+                    <Text style={styles.lowStockBadge} accessibilityLabel="Stok azaliyor">
+                      !
+                    </Text>
+                  ) : null}
+                  <Text style={[styles.nameCellText, lowStock && styles.nameCellTextLow]} numberOfLines={2}>
+                    {item.stock_name || "-"}
+                  </Text>
+                  {lowStock ? (
+                    <Text style={styles.lowStockHint} numberOfLines={2}>
+                      Stogunuz azaliyor
+                    </Text>
+                  ) : null}
+                </View>
                 <Text style={styles.dataCell}>{item.stock_category_name || "-"}</Text>
                 <Text style={styles.dataCell}>{formatNumber(item.unit_cost, 2)}</Text>
                 <Text style={styles.dataCell}>
@@ -695,6 +783,9 @@ export default function MyStocksScreen({ userId, stocksRefreshNonce = 0, myStock
                 <Text style={styles.dataCell}>{item.unit_name || "-"}</Text>
                 <Text style={styles.dataCell}>{item.seller_name || "-"}</Text>
                 <View style={[styles.dataCell, styles.actionCell]}>
+                  <TouchableOpacity style={styles.alertBtn} onPress={() => openAlertModal(item)}>
+                    <Text style={styles.alertBtnText}>Uyari Ekle</Text>
+                  </TouchableOpacity>
                   <TouchableOpacity style={styles.editBtn} onPress={() => openEditModal(item)}>
                     <Text style={styles.editBtnText}>Duzenle</Text>
                   </TouchableOpacity>
@@ -703,10 +794,55 @@ export default function MyStocksScreen({ userId, stocksRefreshNonce = 0, myStock
                   </TouchableOpacity>
                 </View>
               </View>
-            ))
+            );
+            })
           )}
         </View>
       </ScrollView>
+
+      <Modal visible={alertStock != null} transparent animationType="fade" onRequestClose={closeAlertModal}>
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.modalBackdrop} onPress={closeAlertModal} />
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>Stok Uyarisi</Text>
+            <Text style={styles.alertModalHint}>
+              {alertStock?.stock_name || "Stok"} — Mevcut miktar:{" "}
+              {formatQuantityDisplay(alertStock?.stock_quantity, alertStock?.unit_name)}{" "}
+              {alertStock?.unit_name || ""}
+            </Text>
+            <Text style={styles.alertModalHint}>
+              Stok miktari bu degerin altina veya esidine dustugunde kirmizi uyari gosterilir.
+            </Text>
+            <Text style={styles.editLabel}>Uyari esigi (miktar)</Text>
+            <TextInput
+              style={styles.editInput}
+              value={alertThresholdInput}
+              onChangeText={setAlertThresholdInput}
+              placeholder="Orn: 10"
+              placeholderTextColor="#666"
+              keyboardType="decimal-pad"
+              editable={!savingAlert}
+            />
+            <View style={styles.editActionRow}>
+              <TouchableOpacity style={styles.cancelBtn} onPress={closeAlertModal} disabled={savingAlert}>
+                <Text style={styles.cancelBtnText}>Iptal</Text>
+              </TouchableOpacity>
+              {alertStock?.stock_alert != null && !Number.isNaN(Number(alertStock.stock_alert)) ? (
+                <TouchableOpacity
+                  style={styles.clearAlertBtn}
+                  onPress={onClearStockAlert}
+                  disabled={savingAlert}
+                >
+                  <Text style={styles.clearAlertBtnText}>Kaldir</Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity style={styles.saveBtn} onPress={onSaveStockAlert} disabled={savingAlert}>
+                <Text style={styles.saveBtnText}>{savingAlert ? "Kaydediliyor..." : "Kaydet"}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={editingStock != null} transparent animationType="fade" onRequestClose={closeEditModal}>
         <View style={styles.modalRoot}>
@@ -845,7 +981,7 @@ const styles = StyleSheet.create({
   },
   pageTitleRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 12,
     marginTop: 8,
@@ -1019,13 +1155,73 @@ const styles = StyleSheet.create({
   nameCell: {
     width: 152
   },
+  nameCellWrap: {
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: 2
+  },
+  nameCellText: {
+    color: COLORS.textLight,
+    fontSize: 11,
+    fontWeight: "600"
+  },
+  nameCellTextLow: {
+    color: "#ff6d6d"
+  },
+  lowStockBadge: {
+    color: "#ffffff",
+    backgroundColor: "#d9534f",
+    fontWeight: "900",
+    fontSize: 12,
+    width: 18,
+    height: 18,
+    lineHeight: 18,
+    textAlign: "center",
+    borderRadius: 9,
+    overflow: "hidden",
+    marginBottom: 2
+  },
+  lowStockHint: {
+    color: "#ff6d6d",
+    fontSize: 9,
+    fontWeight: "700"
+  },
   actionCell: {
-    width: 132,
+    width: 200,
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "flex-start",
     alignItems: "center",
     gap: 6
+  },
+  alertBtn: {
+    borderWidth: 1,
+    borderColor: "#e8c547",
+    borderRadius: 8,
+    paddingVertical: 5,
+    paddingHorizontal: 7
+  },
+  alertBtnText: {
+    color: "#e8c547",
+    fontSize: 10,
+    fontWeight: "700"
+  },
+  alertModalHint: {
+    color: COLORS.textLight,
+    fontSize: 12,
+    lineHeight: 18,
+    marginBottom: 8
+  },
+  clearAlertBtn: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12
+  },
+  clearAlertBtnText: {
+    color: COLORS.textLight,
+    fontWeight: "700"
   },
   editBtn: {
     borderWidth: 1,

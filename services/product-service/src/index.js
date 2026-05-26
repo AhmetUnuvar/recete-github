@@ -2,6 +2,10 @@ const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
 const { createPool, initProductDatabase } = require("../database/database");
+const { getCache, setCache, delCache } = require("./cache");
+
+const TTL_USER = 30;  // retails, owned-products
+const TTL_PRODUCTS = 60; // product recipes
 
 const app = express();
 const port = process.env.PORT || 4004;
@@ -192,11 +196,432 @@ app.get("/health", (_req, res) => {
   res.json({ service: "product-service", ok: true });
 });
 
-app.get("/owned-products", async (req, res) => {
+const listRetailsHandler = async (req, res) => {
   const { user_id } = req.query;
   if (!user_id) {
     return res.status(400).json({ message: "user_id zorunlu." });
   }
+
+  const cacheKey = `cache:retails:${user_id}`;
+  const cached = await getCache(cacheKey);
+  if (cached) return res.json(cached);
+
+  try {
+    const result = await pool.query(
+      `SELECT
+         r.id,
+         r.user_id,
+         r.retail_name,
+         r.retail_quantity,
+         r.retail_price,
+         r.retail_seller_price,
+         r.unit_id,
+         r.customer_id,
+         r.seller_id,
+         u.unit_name,
+         sl.seller_name,
+         r.created_at,
+         r.updated_at,
+         r.deleted_at
+       FROM retail_db r
+       LEFT JOIN unit_db u ON u.id = r.unit_id AND u.deleted_at IS NULL
+       LEFT JOIN seller_db sl ON sl.id = r.seller_id AND sl.deleted_at IS NULL
+       WHERE r.user_id = $1
+         AND r.deleted_at IS NULL
+       ORDER BY r.created_at DESC`,
+      [user_id]
+    );
+    await setCache(cacheKey, result.rows, TTL_USER);
+    return res.json(result.rows);
+  } catch (error) {
+    console.error("[product-service][retails] liste hatasi:", error.message);
+    return res.status(500).json({ message: "Perakende urunler listelenemedi." });
+  }
+};
+
+const createRetailHandler = async (req, res) => {
+  const {
+    user_id,
+    seller_id,
+    retail_name,
+    retail_quantity,
+    unit_id,
+    retail_seller_price,
+    retail_price,
+    paid_amount: paid_amount_raw
+  } = req.body || {};
+
+  if (
+    !user_id ||
+    !seller_id ||
+    !retail_name ||
+    retail_quantity === undefined ||
+    !unit_id ||
+    retail_seller_price === undefined ||
+    retail_price === undefined
+  ) {
+    return res.status(400).json({
+      message:
+        "user_id, seller_id, retail_name, retail_quantity, unit_id, retail_seller_price ve retail_price zorunlu."
+    });
+  }
+
+  const name = String(retail_name).trim();
+  if (!name) {
+    return res.status(400).json({ message: "Perakende urun adi bos olamaz." });
+  }
+
+  const parsedQty = Number(retail_quantity);
+  const parsedBuy = Number(retail_seller_price);
+  const parsedSell = Number(retail_price);
+  if (Number.isNaN(parsedQty) || parsedQty <= 0) {
+    return res.status(400).json({ message: "Miktar sifirdan buyuk olmali." });
+  }
+  if (Number.isNaN(parsedBuy) || parsedBuy < 0 || Number.isNaN(parsedSell) || parsedSell < 0) {
+    return res.status(400).json({ message: "Alis ve satis fiyatlari gecerli olmali." });
+  }
+
+  try {
+    const sellerCheck = await pool.query(
+      `SELECT id FROM seller_db
+       WHERE id = $1::uuid AND user_id = $2::uuid AND deleted_at IS NULL`,
+      [seller_id, user_id]
+    );
+    if (sellerCheck.rowCount === 0) {
+      return res.status(400).json({ message: "Gecerli bir tedarikci seciniz." });
+    }
+
+    const unitCheck = await pool.query(
+      `SELECT id FROM unit_db
+       WHERE id = $1::uuid AND deleted_at IS NULL
+         AND (is_default = TRUE OR user_id = $2::uuid)`,
+      [unit_id, user_id]
+    );
+    if (unitCheck.rowCount === 0) {
+      return res.status(400).json({ message: "Gecerli bir birim seciniz." });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO retail_db (
+         user_id, retail_name, retail_quantity, retail_price, retail_seller_price,
+         unit_id, seller_id
+       )
+       VALUES ($1::uuid, $2, $3::numeric, $4::numeric, $5::numeric, $6::uuid, $7::uuid)
+       RETURNING id, user_id, retail_name, retail_quantity, retail_price, retail_seller_price,
+                 unit_id, customer_id, seller_id, created_at, updated_at, deleted_at`,
+      [
+        user_id,
+        name,
+        roundMoney(parsedQty),
+        roundMoney(parsedSell),
+        roundMoney(parsedBuy),
+        unit_id,
+        seller_id
+      ]
+    );
+
+    const row = result.rows[0];
+    const enriched = await pool.query(
+      `SELECT r.*, u.unit_name, sl.seller_name
+       FROM retail_db r
+       LEFT JOIN unit_db u ON u.id = r.unit_id
+       LEFT JOIN seller_db sl ON sl.id = r.seller_id
+       WHERE r.id = $1::uuid`,
+      [row.id]
+    );
+
+    const purchaseTotal = roundMoney(parsedQty * parsedBuy);
+    let paidExpense = purchaseTotal;
+    if (paid_amount_raw !== undefined && paid_amount_raw !== null && paid_amount_raw !== "") {
+      const p = parseMoneyInput(paid_amount_raw);
+      if (p === null || Number.isNaN(p) || p < 0) {
+        return res.status(400).json({ message: "Odenen tutar gecerli bir sayi olmalidir." });
+      }
+      if (p > purchaseTotal + 1e-6) {
+        return res.status(400).json({ message: "Odenen tutar toplam alis tutarindan buyuk olamaz." });
+      }
+      paidExpense = p;
+    }
+    const remainingExpense = roundMoney(purchaseTotal - paidExpense);
+
+    let paymentTxId = null;
+    if (paidExpense > 1e-6) {
+      try {
+        const txRow = await postTransaction({
+          user_id,
+          amount: paidExpense,
+          is_income: false,
+          is_fixed: false,
+          buyer_id: null,
+          product_id: null,
+          transaction_name: `${name} perakende alis`
+        });
+        paymentTxId = txRow?.id || null;
+      } catch (txError) {
+        console.error("[product-service][retails] alis gideri kaydi hatasi:", txError.message);
+      }
+    }
+    if (remainingExpense > 1e-6) {
+      try {
+        await pool.query(
+          `INSERT INTO liabilities_receivables_db (
+            user_id, seller_id, customer_id, transaction_id, is_paid, amount, remaining_amount, is_receivable
+          ) VALUES ($1::uuid, $2::uuid, NULL, $3::uuid, FALSE, $4::numeric, $5::numeric, FALSE)`,
+          [user_id, seller_id, paymentTxId, purchaseTotal, remainingExpense]
+        );
+      } catch (liabError) {
+        console.error("[product-service][retails] tedarikci borcu kaydi hatasi:", liabError.message);
+      }
+    }
+
+    await delCache(`cache:retails:${user_id}`);
+    return res.status(201).json(enriched.rows[0] || row);
+  } catch (error) {
+    console.error("[product-service][retails] kayit hatasi:", error.message);
+    return res.status(400).json({ message: "Perakende urun kaydedilemedi.", detail: error.message });
+  }
+};
+
+const sellRetailHandler = async (req, res) => {
+  const retailId = req.params.retail_id;
+  const {
+    user_id,
+    buyer_id,
+    quantity_sold: qtyRaw,
+    received_amount: received_raw,
+    unit_sale_price: unit_sale_raw
+  } = req.body || {};
+  if (!user_id || !retailId || !buyer_id || qtyRaw === undefined || qtyRaw === null || qtyRaw === "") {
+    return res.status(400).json({
+      message: "user_id, retail_id, buyer_id ve quantity_sold zorunlu."
+    });
+  }
+
+  const soldQty = Number(qtyRaw);
+  if (Number.isNaN(soldQty) || soldQty <= 0) {
+    return res.status(400).json({ message: "Satilan miktar sifirdan buyuk olmali." });
+  }
+
+  const client = await pool.connect();
+  let retailName = "";
+  let unitSell = 0;
+  let unitBuy = 0;
+  let saleTotal = 0;
+  let soldProfit = 0;
+  let remainingQty = 0;
+  let collected = 0;
+  let remainder = 0;
+  try {
+    await client.query("BEGIN");
+
+    const retailResult = await client.query(
+      `SELECT id, retail_name, retail_quantity, retail_price, retail_seller_price
+       FROM retail_db
+       WHERE id = $1::uuid AND user_id = $2::uuid AND deleted_at IS NULL
+       FOR UPDATE`,
+      [retailId, user_id]
+    );
+    if (retailResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Perakende urun bulunamadi." });
+    }
+    const rrow = retailResult.rows[0];
+    retailName = String(rrow.retail_name || "").trim();
+    const available = Number(rrow.retail_quantity) || 0;
+    unitSell = Number(rrow.retail_price) || 0;
+    unitBuy = Number(rrow.retail_seller_price) || 0;
+
+    if (unit_sale_raw !== undefined && unit_sale_raw !== null && unit_sale_raw !== "") {
+      const overrideUnit = parseMoneyInput(unit_sale_raw);
+      if (overrideUnit === null || Number.isNaN(overrideUnit) || overrideUnit < 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ message: "Birim satis fiyati gecerli bir sayi olmalidir." });
+      }
+      if (overrideUnit > 0) {
+        unitSell = overrideUnit;
+      }
+    }
+
+    if (soldQty > available + 1e-9) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        message: `Yetersiz stok. Mevcut miktar: ${available}.`
+      });
+    }
+    if (unitSell <= 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ message: "Bu urun icin gecerli satis fiyati yok." });
+    }
+
+    const buyerResult = await client.query(
+      `SELECT id
+       FROM customers_db
+       WHERE id = $1::uuid
+         AND user_id = $2::uuid
+         AND deleted_at IS NULL`,
+      [buyer_id, user_id]
+    );
+    if (buyerResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ message: "Secilen musteri bulunamadi." });
+    }
+
+    remainingQty = roundMoney(available - soldQty);
+    await client.query(
+      `UPDATE retail_db
+       SET retail_quantity = $1::numeric,
+           customer_id = $2::uuid,
+           updated_at = NOW()
+       WHERE id = $3::uuid`,
+      [remainingQty, buyer_id, retailId]
+    );
+
+    saleTotal = roundMoney(soldQty * unitSell);
+    soldProfit = roundMoney(soldQty * (unitSell - unitBuy));
+
+    collected = saleTotal;
+    if (received_raw !== undefined && received_raw !== null && received_raw !== "") {
+      const r = parseMoneyInput(received_raw);
+      if (r === null || Number.isNaN(r) || r < 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ message: "Tahsil ettiginiz tutar gecerli bir sayi olmalidir." });
+      }
+      if (r > saleTotal + 1e-6) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ message: "Tahsil ettiginiz tutar satis tutarindan buyuk olamaz." });
+      }
+      collected = r;
+    }
+    remainder = roundMoney(saleTotal - collected);
+
+    await client.query("COMMIT");
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (_rb) {
+      /* noop */
+    }
+    return res.status(400).json({ message: "Perakende satis basarisiz.", detail: error.message });
+  } finally {
+    client.release();
+  }
+
+  let incomeTxId = null;
+  try {
+    const txLabel = retailName
+      ? `${retailName} perakende satis (${soldQty} adet)`
+      : `Perakende satis (${soldQty} adet)`;
+    const incomeRow = await postTransaction({
+      user_id,
+      amount: collected,
+      is_income: true,
+      is_fixed: false,
+      buyer_id,
+      product_id: null,
+      transaction_name: txLabel
+    });
+    incomeTxId = incomeRow?.id || null;
+
+    const recordedProfit =
+      saleTotal > 1e-6 && soldProfit > 1e-6
+        ? roundMoney(soldProfit * (collected / saleTotal))
+        : 0;
+    if (recordedProfit > 1e-6 && incomeTxId) {
+      await pool.query(
+        `INSERT INTO profit_db (user_id, transaction_id, product_id, customer_id, profit_amount)
+         VALUES ($1::uuid, $2::uuid, NULL, $3::uuid, $4::numeric)`,
+        [user_id, incomeTxId, buyer_id, recordedProfit]
+      );
+    }
+  } catch (txError) {
+    console.error("[product-service][retail-sell] transactions/profit_db kaydi hatasi:", txError.message);
+  }
+
+  if (remainder > 1e-6) {
+    try {
+      await pool.query(
+        `INSERT INTO liabilities_receivables_db (
+          user_id, seller_id, customer_id, transaction_id, is_paid, amount, remaining_amount, is_receivable
+        ) VALUES ($1::uuid, NULL, $2::uuid, $3::uuid, FALSE, $4::numeric, $5::numeric, TRUE)`,
+        [user_id, buyer_id, incomeTxId, saleTotal, remainder]
+      );
+    } catch (liabError) {
+      console.error("[product-service][retail-sell] alacak kaydi hatasi:", liabError.message);
+    }
+  }
+
+  await delCache(`cache:retails:${user_id}`);
+  return res.json({
+    ok: true,
+    retail_id: retailId,
+    quantity_sold: soldQty,
+    sale_total: saleTotal,
+    profit: soldProfit,
+    buyer_id,
+    collected_amount: collected,
+    remainder_receivable: remainder,
+    remaining_quantity: remainingQty
+  });
+};
+
+app.get("/retails", listRetailsHandler);
+app.get("/product/retails", listRetailsHandler);
+app.post("/retails", createRetailHandler);
+app.post("/product/retails", createRetailHandler);
+app.post("/retails/:retail_id/sell", sellRetailHandler);
+app.post("/product/retails/:retail_id/sell", sellRetailHandler);
+
+const patchProductAlertHandler = async (req, res) => {
+  const productId = req.params.id;
+  const { user_id, product_alert: product_alert_raw } = req.body || {};
+  if (!user_id || !productId) {
+    return res.status(400).json({ message: "user_id ve product id zorunlu." });
+  }
+  if (!Object.prototype.hasOwnProperty.call(req.body || {}, "product_alert")) {
+    return res.status(400).json({ message: "product_alert alani zorunlu." });
+  }
+
+  let nextAlert = null;
+  if (product_alert_raw !== null && product_alert_raw !== "") {
+    const parsed = Number(product_alert_raw);
+    if (Number.isNaN(parsed) || parsed < 0) {
+      return res.status(400).json({ message: "product_alert gecerli bir sayi olmali (0 veya buyuk)." });
+    }
+    nextAlert = parsed;
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE product_db
+       SET product_alert = $1::numeric,
+           updated_at = NOW()
+       WHERE id = $2::uuid AND user_id = $3::uuid AND deleted_at IS NULL
+       RETURNING id, user_id, product_name, product_alert, updated_at`,
+      [nextAlert, productId, user_id]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Urun bulunamadi." });
+    }
+    await delCache(`cache:owned-products:${user_id}`);
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("[product-service][product-alert] guncelleme hatasi:", error.message);
+    return res.status(400).json({ message: "Urun uyarisi guncellenemedi.", detail: error.message });
+  }
+};
+
+app.patch("/products/:id/alert", patchProductAlertHandler);
+app.patch("/product/products/:id/alert", patchProductAlertHandler);
+
+const listOwnedProductsHandler = async (req, res) => {
+  const { user_id } = req.query;
+  if (!user_id) {
+    return res.status(400).json({ message: "user_id zorunlu." });
+  }
+
+  const cacheKey = `cache:owned-products:${user_id}`;
+  const cached = await getCache(cacheKey);
+  if (cached) return res.json(cached);
 
   try {
     const result = await pool.query(
@@ -204,6 +629,7 @@ app.get("/owned-products", async (req, res) => {
          p.id AS product_id,
          p.product_name,
          p.price,
+         p.product_alert,
          COUNT(o.id)::integer AS adet,
          MAX(o.created_at) AS last_produced_at
        FROM owned_product_db o
@@ -213,20 +639,34 @@ app.get("/owned-products", async (req, res) => {
         AND p.deleted_at IS NULL
        WHERE o.user_id = $1
          AND o.deleted_at IS NULL
-       GROUP BY p.id, p.product_name, p.price
+       GROUP BY p.id, p.product_name, p.price, p.product_alert
        ORDER BY MAX(o.created_at) DESC`,
       [user_id]
     );
-    return res.json(result.rows);
+    const rows = result.rows.map((row) => {
+      const alertRaw = row.product_alert;
+      const alertNum = alertRaw === null || alertRaw === undefined ? null : Number(alertRaw);
+      return {
+        ...row,
+        adet: Number(row.adet) || 0,
+        product_alert:
+          alertNum === null || Number.isNaN(alertNum) ? null : Math.round(alertNum * 1000) / 1000
+      };
+    });
+    await setCache(cacheKey, rows, TTL_USER);
+    return res.json(rows);
   } catch (error) {
     console.error("[product-service][owned-products] liste hatasi:", error.message);
     return res.status(500).json({ message: "Uretilen urunler listelenemedi." });
   }
-});
+};
+
+app.get("/owned-products", listOwnedProductsHandler);
+app.get("/product/owned-products", listOwnedProductsHandler);
 
 app.post("/owned-products/:product_id/sell", async (req, res) => {
   const productId = req.params.product_id;
-  const { user_id, buyer_id, received_amount: received_raw } = req.body || {};
+  const { user_id, buyer_id, received_amount: received_raw, sale_price: sale_price_raw } = req.body || {};
   if (!user_id || !productId || !buyer_id) {
     return res.status(400).json({ message: "user_id, product_id ve buyer_id zorunlu." });
   }
@@ -253,6 +693,16 @@ app.post("/owned-products/:product_id/sell", async (req, res) => {
     }
     const prow = productResult.rows[0];
     soldPrice = Number(prow.price) || 0;
+    if (sale_price_raw !== undefined && sale_price_raw !== null && sale_price_raw !== "") {
+      const overridePrice = parseMoneyInput(sale_price_raw);
+      if (overridePrice === null || Number.isNaN(overridePrice) || overridePrice < 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ message: "Satis fiyati gecerli bir sayi olmalidir." });
+      }
+      if (overridePrice > 0) {
+        soldPrice = overridePrice;
+      }
+    }
     soldProductName = String(prow.product_name || "").trim();
     const matRaw = prow.material_cost_total;
     const cstRaw = prow.cost;
@@ -391,6 +841,7 @@ app.post("/owned-products/:product_id/sell", async (req, res) => {
     }
   }
 
+  await delCache(`cache:owned-products:${user_id}`);
   return res.json({
     ok: true,
     product_id: productId,
@@ -409,6 +860,10 @@ app.get("/products", async (req, res) => {
     return res.status(400).json({ message: "user_id zorunlu." });
   }
 
+  const cacheKey = `cache:products:${user_id}`;
+  const cachedResult = await getCache(cacheKey);
+  if (cachedResult) return res.json(cachedResult);
+
   try {
     const result = await pool.query(
       `SELECT id, user_id, stock_id, product_name, total_days, total_hours, material_cost_total, cost, price, created_at, updated_at, deleted_at
@@ -419,9 +874,10 @@ app.get("/products", async (req, res) => {
     );
     const out = result.rows.map((row) => {
       const pid = String(row.id);
-      const cached = recipeCacheByProductId.get(pid);
-      return { ...row, materials: Array.isArray(cached) ? cached : [] };
+      const inMem = recipeCacheByProductId.get(pid);
+      return { ...row, materials: Array.isArray(inMem) ? inMem : [] };
     });
+    await setCache(cacheKey, out, TTL_PRODUCTS);
     return res.json(out);
   } catch (error) {
     console.error("[product-service][products] liste hatasi:", error.message);
@@ -510,6 +966,7 @@ app.post("/products", async (req, res) => {
     });
 
     recipeCacheByProductId.set(String(insert.rows[0].id), calcResult.lines || []);
+    await delCache(`cache:products:${user_id}`);
 
     return res.status(201).json({
       ...insert.rows[0],
@@ -597,6 +1054,7 @@ app.patch("/products/:id", async (req, res) => {
       client.release();
     }
     recipeCacheByProductId.set(String(productId), calcResult.lines || []);
+    await delCache(`cache:products:${user_id}`);
     return res.json({
       ...updated.rows[0],
       materials: calcResult.lines || []
@@ -630,6 +1088,7 @@ app.delete("/products/:id", async (req, res) => {
        WHERE product_id = $1::uuid AND user_id = $2 AND deleted_at IS NULL`,
       [productId, user_id]
     );
+    await delCache(`cache:products:${user_id}`, `cache:owned-products:${user_id}`);
     return res.json({ ok: true, message: "Urun silindi." });
   } catch (error) {
     return res.status(400).json({ message: "Urun silinemedi.", detail: error.message });
@@ -747,6 +1206,7 @@ app.post("/products/:id/produce", async (req, res) => {
     await client.query("COMMIT");
 
     console.log("[product-service][produce] stok dusuldu:", { product_id: productId });
+    await delCache(`cache:owned-products:${user_id}`, `cache:stocks:${user_id}`);
     return res.json({
       ok: true,
       message: "Uretim yapildi; malzemeler stoktan dustu.",

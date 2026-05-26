@@ -11,6 +11,7 @@ import {
   Pressable
 } from "react-native";
 import { COLORS } from "../constants/colors";
+import PageTitleRow from "../components/PageTitleRow";
 import { HORIZONTAL_PADDING } from "../constants/layout";
 import {
   createStock,
@@ -27,6 +28,8 @@ import {
   getPendingNotificationsForPage,
   TARGET_PAGE_STOCK_ADD
 } from "../services/notificationService";
+import KdvPriceInput from "../components/KdvPriceInput";
+import { resolvePriceWithKdv } from "../utils/kdv";
 
 /** Bildirim metnini bloklara böler (paragraf ve madde işaretleri). */
 const parseNoticeMessage = (raw) => {
@@ -75,6 +78,8 @@ export default function StockOperationsScreen({ userId, stockOpsFocusNonce = 0 }
   const [seller, setSeller] = useState(null);
   const [stockName, setStockName] = useState("");
   const [unitCost, setUnitCost] = useState("");
+  const [unitCostKdvIncluded, setUnitCostKdvIncluded] = useState(false);
+  const [unitCostKdvRate, setUnitCostKdvRate] = useState(null);
   const [stockMiktari, setStockMiktari] = useState("");
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newUnitName, setNewUnitName] = useState("");
@@ -102,10 +107,14 @@ export default function StockOperationsScreen({ userId, stockOpsFocusNonce = 0 }
 
   const closePicker = () => setOpenPicker(null);
 
+  const getResolvedUnitCost = () =>
+    resolvePriceWithKdv(unitCost, unitCostKdvIncluded, unitCostKdvRate);
+
   const getStockTotalPreview = () => {
     const q = Number(String(stockMiktari || "").replace(",", "."));
-    const c = Number(String(unitCost || "").replace(",", "."));
-    if (Number.isNaN(q) || Number.isNaN(c) || q < 0 || c < 0) return null;
+    const costResolved = getResolvedUnitCost();
+    if (Number.isNaN(q) || q < 0 || !costResolved.ok) return null;
+    const c = costResolved.final;
     return Math.round(q * c * 10000) / 10000;
   };
 
@@ -374,6 +383,10 @@ export default function StockOperationsScreen({ userId, stockOpsFocusNonce = 0 }
     try {
       setStockMessage("");
       validateStockForm();
+      const costResolved = getResolvedUnitCost();
+      if (!costResolved.ok) {
+        throw new Error(costResolved.message);
+      }
       setStockConfirmStep(1);
       setPaidAmountInput("");
       setShowStockConfirmModal(true);
@@ -402,6 +415,12 @@ export default function StockOperationsScreen({ userId, stockOpsFocusNonce = 0 }
         return;
       }
 
+      const costResolved = getResolvedUnitCost();
+      if (!costResolved.ok) {
+        setStockMessage(costResolved.message);
+        return;
+      }
+
       setIsSavingStock(true);
       await createStock({
         user_id: userId,
@@ -409,7 +428,7 @@ export default function StockOperationsScreen({ userId, stockOpsFocusNonce = 0 }
         stock_name: stockName.trim(),
         stock_quantity: stockMiktari.trim().replace(",", "."),
         unit_id: unit.id,
-        unit_cost: unitCost.trim().replace(",", "."),
+        unit_cost: String(costResolved.final),
         seller_id: seller.id,
         currency_id: currency.id,
         paid_amount: paid
@@ -419,6 +438,8 @@ export default function StockOperationsScreen({ userId, stockOpsFocusNonce = 0 }
       setStockName("");
       setStockMiktari("");
       setUnitCost("");
+      setUnitCostKdvIncluded(false);
+      setUnitCostKdvRate(null);
       setCategory(null);
       setUnit(null);
       setCurrency(null);
@@ -504,7 +525,7 @@ export default function StockOperationsScreen({ userId, stockOpsFocusNonce = 0 }
   return (
     <>
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Stok Ekle</Text>
+      <PageTitleRow title="Stok Ekle" titleStyle={styles.title} />
 
       <Text style={styles.label}>Stok kategorisi sec</Text>
       <TouchableOpacity
@@ -524,6 +545,15 @@ export default function StockOperationsScreen({ userId, stockOpsFocusNonce = 0 }
       </TouchableOpacity>
       {renderPickerModal("category", categories, setCategory, "Stok kategorisi")}
 
+      <Text style={styles.label}>Satici sec</Text>
+      <TouchableOpacity style={styles.selectBox} onPress={() => setOpenPicker("seller")}>
+        <Text style={seller ? styles.selectValue : styles.selectPlaceholder}>
+          {sellersLoading ? "Saticilar yukleniyor..." : seller?.seller_name || "Satici seciniz"}
+        </Text>
+        <Text style={styles.chevron}>v</Text>
+      </TouchableOpacity>
+      {renderPickerModal("seller", sellers, setSeller, "Satici sec")}
+
       <Text style={styles.label}>Stok adi giriniz</Text>
       <TextInput
         style={styles.input}
@@ -542,14 +572,19 @@ export default function StockOperationsScreen({ userId, stockOpsFocusNonce = 0 }
       </TouchableOpacity>
       {renderPickerModal("unit", units, setUnit, "Birim")}
 
-      <Text style={styles.label}>Birim maliyeti</Text>
-      <TextInput
-        style={styles.input}
-        value={unitCost}
-        onChangeText={setUnitCost}
+      <KdvPriceInput
+        label="Birim maliyeti"
         placeholder="Orn: 125,50"
-        placeholderTextColor="#666"
-        keyboardType="decimal-pad"
+        value={unitCost}
+        onChangeValue={setUnitCost}
+        kdvIncluded={unitCostKdvIncluded}
+        onKdvIncludedChange={(v) => {
+          setUnitCostKdvIncluded(v);
+          if (v) setUnitCostKdvRate(null);
+        }}
+        selectedKdvRate={unitCostKdvRate}
+        onSelectedKdvRateChange={setUnitCostKdvRate}
+        inputStyle={styles.input}
       />
 
       <Text style={styles.label}>Stok miktari</Text>
@@ -574,15 +609,6 @@ export default function StockOperationsScreen({ userId, stockOpsFocusNonce = 0 }
         <Text style={styles.chevron}>v</Text>
       </TouchableOpacity>
       {renderPickerModal("currency", currencies, setCurrency, "Para birimi")}
-
-      <Text style={styles.label}>Satici sec</Text>
-      <TouchableOpacity style={styles.selectBox} onPress={() => setOpenPicker("seller")}>
-        <Text style={seller ? styles.selectValue : styles.selectPlaceholder}>
-          {sellersLoading ? "Saticilar yukleniyor..." : seller?.seller_name || "Satici seciniz"}
-        </Text>
-        <Text style={styles.chevron}>v</Text>
-      </TouchableOpacity>
-      {renderPickerModal("seller", sellers, setSeller, "Satici sec")}
 
       {stockMessage ? <Text style={styles.categoryMessage}>{stockMessage}</Text> : null}
       <TouchableOpacity style={styles.button} onPress={onOpenStockConfirm} disabled={isSavingStock}>

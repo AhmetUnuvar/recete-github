@@ -1,6 +1,6 @@
 const { Pool } = require("pg");
 
-const createPool = () => new Pool({ connectionString: process.env.DATABASE_URL });
+const createPool = () => new Pool({ connectionString: process.env.DATABASE_URL, max: 25 });
 
 /** Sabit ID: ana sayfa karşılama bildirimi (seed / UPSERT). */
 const HOME_WELCOME_NOTIFICATION_ID = "c0ffee00-b00b-4000-8000-000000000001";

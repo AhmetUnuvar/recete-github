@@ -2,6 +2,9 @@ const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
 const { createPool, initFinanceDatabase } = require("../database/database");
+const { getCache, setCache, delCache } = require("./cache");
+
+const TTL_FIXED = 60; // sabit gelir/gider listesi
 
 const app = express();
 const port = process.env.PORT || 4003;
@@ -246,6 +249,11 @@ app.get("/fixed", async (req, res) => {
   if (!user_id) {
     return res.status(400).json({ message: "user_id zorunlu" });
   }
+
+  const cacheKey = `cache:fixed:${user_id}`;
+  const cached = await getCache(cacheKey);
+  if (cached) return res.json(cached);
+
   try {
     const result = await pool.query(
       `SELECT id, user_id, fixed_name, is_fixed_income, amount, is_default, created_at, updated_at, deleted_at
@@ -254,6 +262,7 @@ app.get("/fixed", async (req, res) => {
        ORDER BY created_at DESC`,
       [user_id]
     );
+    await setCache(cacheKey, result.rows, TTL_FIXED);
     return res.json(result.rows);
   } catch (error) {
     console.error("[finance-service][fixed] listeleme hatasi:", error.message);
@@ -296,6 +305,7 @@ app.post("/fixed", async (req, res) => {
     } catch (lrError) {
       console.error("[finance-service][fixed] liabilities kaydi hatasi:", lrError.message);
     }
+    await delCache(`cache:fixed:${user_id}`);
     return res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error("[finance-service][fixed] ekleme hatasi:", error.message);
@@ -343,6 +353,7 @@ app.patch("/fixed/:id", async (req, res) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Kayit bulunamadi." });
     }
+    await delCache(`cache:fixed:${user_id}`);
     return res.json(result.rows[0]);
   } catch (error) {
     console.error("[finance-service][fixed] guncelleme hatasi:", error.message);
@@ -370,6 +381,7 @@ app.delete("/fixed/:id", async (req, res) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Kayit bulunamadi." });
     }
+    await delCache(`cache:fixed:${user_id}`);
     return res.json({ ok: true, message: "Sabit kayit silindi." });
   } catch (error) {
     console.error("[finance-service][fixed] silme hatasi:", error.message);
