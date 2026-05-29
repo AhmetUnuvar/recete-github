@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "../constants/config";
+import { apiFetch } from "./apiClient";
 
 const parseResponseBody = async (response) => {
   const text = await response.text();
@@ -15,8 +16,8 @@ export const getRetails = async (userId) => {
     throw new Error("Kullanici bilgisi bulunamadi. Lutfen tekrar giris yapin.");
   }
 
-  const response = await fetch(
-    `${API_BASE_URL}/product/retails?user_id=${encodeURIComponent(userId)}`
+  const response = await apiFetch(
+    `/product/retails?user_id=${encodeURIComponent(userId)}`
   );
   const data = await parseResponseBody(response);
   if (!response.ok) {
@@ -43,7 +44,7 @@ export const createRetail = async ({
     throw new Error("Kullanici bilgisi bulunamadi. Lutfen tekrar giris yapin.");
   }
 
-  const response = await fetch(`${API_BASE_URL}/product/retails`, {
+  const response = await apiFetch(`/product/retails`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -85,8 +86,8 @@ export const sellRetail = async ({
   if (Number.isNaN(qty) || qty <= 0) {
     throw new Error("Gecerli bir satis miktari giriniz.");
   }
-  const response = await fetch(
-    `${API_BASE_URL}/product/retails/${encodeURIComponent(retailId)}/sell`,
+  const response = await apiFetch(
+    `/product/retails/${encodeURIComponent(retailId)}/sell`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -118,8 +119,8 @@ export const setProductAlert = async ({ userId, productId, productAlert }) => {
   if (!userId || !productId) {
     throw new Error("Kullanici veya urun bilgisi eksik.");
   }
-  const response = await fetch(
-    `${API_BASE_URL}/product/products/${encodeURIComponent(productId)}/alert`,
+  const response = await apiFetch(
+    `/product/products/${encodeURIComponent(productId)}/alert`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -145,8 +146,8 @@ export const getOwnedProducts = async (userId) => {
     throw new Error("Kullanici bilgisi bulunamadi. Lutfen tekrar giris yapin.");
   }
 
-  const response = await fetch(
-    `${API_BASE_URL}/product/owned-products?user_id=${encodeURIComponent(userId)}`
+  const response = await apiFetch(
+    `/product/owned-products?user_id=${encodeURIComponent(userId)}`
   );
   const data = await parseResponseBody(response);
   if (!response.ok) {
@@ -164,8 +165,8 @@ export const getProducts = async (userId) => {
     throw new Error("Kullanici bilgisi bulunamadi. Lutfen tekrar giris yapin.");
   }
 
-  const response = await fetch(
-    `${API_BASE_URL}/product/products?user_id=${encodeURIComponent(userId)}`
+  const response = await apiFetch(
+    `/product/products?user_id=${encodeURIComponent(userId)}`
   );
   const data = await parseResponseBody(response);
   if (!response.ok) {
@@ -183,7 +184,7 @@ export const createProduct = async ({ userId, productName, materials, price = 0,
     throw new Error("Kullanici bilgisi bulunamadi. Lutfen tekrar giris yapin.");
   }
 
-  const response = await fetch(`${API_BASE_URL}/product/products`, {
+  const response = await apiFetch(`/product/products`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -210,7 +211,7 @@ export const updateProduct = async ({ userId, productId, productName, materials,
   if (!userId || !productId) {
     throw new Error("Kullanici veya urun bilgisi eksik.");
   }
-  const response = await fetch(`${API_BASE_URL}/product/products/${encodeURIComponent(productId)}`, {
+  const response = await apiFetch(`/product/products/${encodeURIComponent(productId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -235,7 +236,7 @@ export const deleteProduct = async ({ userId, productId }) => {
   if (!userId || !productId) {
     throw new Error("Kullanici veya urun bilgisi eksik.");
   }
-  const response = await fetch(`${API_BASE_URL}/product/products/${encodeURIComponent(productId)}`, {
+  const response = await apiFetch(`/product/products/${encodeURIComponent(productId)}`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ user_id: userId })
@@ -256,8 +257,8 @@ export const produceProduct = async ({ userId, productId }) => {
     throw new Error("Kullanici veya urun bilgisi eksik.");
   }
 
-  const response = await fetch(
-    `${API_BASE_URL}/product/products/${encodeURIComponent(productId)}/produce`,
+  const response = await apiFetch(
+    `/product/products/${encodeURIComponent(productId)}/produce`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -290,8 +291,8 @@ export const sellOwnedProduct = async ({ userId, productId, buyerId, received_am
   if (sale_price !== undefined && sale_price !== null && sale_price !== "") {
     body.sale_price = sale_price;
   }
-  const response = await fetch(
-    `${API_BASE_URL}/product/owned-products/${encodeURIComponent(productId)}/sell`,
+  const response = await apiFetch(
+    `/product/owned-products/${encodeURIComponent(productId)}/sell`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

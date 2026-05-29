@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   ScrollView,
+  RefreshControl,
   TouchableOpacity,
   ActivityIndicator,
   Modal,
@@ -78,6 +79,7 @@ export default function HomeScreen({
   const [period, setPeriod] = useState("daily");
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [message, setMessage] = useState("");
   const [welcomeNotif, setWelcomeNotif] = useState(null);
   const [welcomeModalOpen, setWelcomeModalOpen] = useState(false);
@@ -120,6 +122,12 @@ export default function HomeScreen({
   useEffect(() => {
     reloadTransactions();
   }, [reloadTransactions, transactionsRefreshNonce]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await reloadTransactions();
+    setRefreshing(false);
+  }, [reloadTransactions]);
 
   const submitStandaloneIncome = async () => {
     const amount = Number(String(incomeAmount || "").replace(",", "."));
@@ -325,7 +333,14 @@ export default function HomeScreen({
   const expenseLength = circumference * expenseRatio;
 
   return (
-    <View style={styles.container}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.scrollContent}
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />
+      }
+    >
       <Text style={styles.title}>Ana Sayfa</Text>
 
       <View style={styles.quickActionsRow}>
@@ -619,15 +634,18 @@ export default function HomeScreen({
           </View>
         </View>
       </Modal>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.background,
-    paddingHorizontal: HORIZONTAL_PADDING
+    backgroundColor: COLORS.background
+  },
+  scrollContent: {
+    paddingHorizontal: HORIZONTAL_PADDING,
+    paddingBottom: 24
   },
   title: {
     color: COLORS.primary,

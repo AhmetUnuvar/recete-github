@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "../constants/config";
+import { apiFetch } from "./apiClient";
 
 const parseResponseBody = async (response) => {
   const text = await response.text();
@@ -15,8 +16,8 @@ export const getStockCategories = async (userId) => {
     throw new Error("Kullanici bilgisi bulunamadi. Lutfen tekrar giris yapin.");
   }
 
-  const response = await fetch(
-    `${API_BASE_URL}/stock/categories?user_id=${encodeURIComponent(userId)}`
+  const response = await apiFetch(
+    `/stock/categories?user_id=${encodeURIComponent(userId)}`
   );
 
   const data = await response.json();
@@ -31,8 +32,8 @@ export const getUnits = async (userId) => {
     throw new Error("Kullanici bilgisi bulunamadi. Lutfen tekrar giris yapin.");
   }
 
-  const response = await fetch(
-    `${API_BASE_URL}/stock/units?user_id=${encodeURIComponent(userId)}`
+  const response = await apiFetch(
+    `/stock/units?user_id=${encodeURIComponent(userId)}`
   );
   const data = await response.json();
   if (!response.ok) {
@@ -42,7 +43,7 @@ export const getUnits = async (userId) => {
 };
 
 export const getCurrencies = async () => {
-  const response = await fetch(`${API_BASE_URL}/stock/currencies`);
+  const response = await apiFetch(`/stock/currencies`);
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data.message || "Para birimleri getirilemedi.");
@@ -54,8 +55,8 @@ export const getSellers = async (userId) => {
   if (!userId) {
     throw new Error("Kullanici bilgisi bulunamadi. Lutfen tekrar giris yapin.");
   }
-  const response = await fetch(
-    `${API_BASE_URL}/stock/sellers?user_id=${encodeURIComponent(userId)}`
+  const response = await apiFetch(
+    `/stock/sellers?user_id=${encodeURIComponent(userId)}`
   );
   const data = await parseResponseBody(response);
   if (!response.ok) {
@@ -71,7 +72,7 @@ export const createSeller = async (sellerName, userId) => {
   if (!userId) {
     throw new Error("Kullanici bilgisi bulunamadi. Lutfen tekrar giris yapin.");
   }
-  const response = await fetch(`${API_BASE_URL}/stock/sellers`, {
+  const response = await apiFetch(`/stock/sellers`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -91,8 +92,8 @@ export const getStocks = async (userId) => {
     throw new Error("Kullanici bilgisi bulunamadi. Lutfen tekrar giris yapin.");
   }
 
-  const response = await fetch(
-    `${API_BASE_URL}/stock/stocks?user_id=${encodeURIComponent(userId)}`
+  const response = await apiFetch(
+    `/stock/stocks?user_id=${encodeURIComponent(userId)}`
   );
   const data = await parseResponseBody(response);
   if (!response.ok) {
@@ -109,7 +110,7 @@ export const createStockCategory = async (stockCategoryName, userId) => {
     throw new Error("Kullanici bilgisi bulunamadi. Lutfen tekrar giris yapin.");
   }
 
-  const response = await fetch(`${API_BASE_URL}/stock/categories`, {
+  const response = await apiFetch(`/stock/categories`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -134,7 +135,7 @@ export const createUnit = async (unitName, userId) => {
     throw new Error("Kullanici bilgisi bulunamadi. Lutfen tekrar giris yapin.");
   }
 
-  const response = await fetch(`${API_BASE_URL}/stock/units`, {
+  const response = await apiFetch(`/stock/units`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -150,7 +151,7 @@ export const createUnit = async (unitName, userId) => {
 };
 
 export const createStock = async (payload) => {
-  const response = await fetch(`${API_BASE_URL}/stock/stocks`, {
+  const response = await apiFetch(`/stock/stocks`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
@@ -171,7 +172,7 @@ export const setStockAlert = async ({ userId, stockId, stockAlert }) => {
     throw new Error("Kullanici veya stok bilgisi eksik.");
   }
   const body = { user_id: userId, stock_alert: stockAlert };
-  const response = await fetch(`${API_BASE_URL}/stock/stocks/${encodeURIComponent(stockId)}`, {
+  const response = await apiFetch(`/stock/stocks/${encodeURIComponent(stockId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
@@ -187,7 +188,7 @@ export const updateStock = async ({ userId, stockId, stockName, stockQuantity, u
   if (!userId || !stockId) {
     throw new Error("Kullanici veya stok bilgisi eksik.");
   }
-  const response = await fetch(`${API_BASE_URL}/stock/stocks/${encodeURIComponent(stockId)}`, {
+  const response = await apiFetch(`/stock/stocks/${encodeURIComponent(stockId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -208,7 +209,7 @@ export const deleteStock = async ({ userId, stockId }) => {
   if (!userId || !stockId) {
     throw new Error("Kullanici veya stok bilgisi eksik.");
   }
-  const response = await fetch(`${API_BASE_URL}/stock/stocks/${encodeURIComponent(stockId)}`, {
+  const response = await apiFetch(`/stock/stocks/${encodeURIComponent(stockId)}`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ user_id: userId })
@@ -230,7 +231,7 @@ export const consumeStockForCustomer = async ({
   if (!userId || !stockId || !buyerId || quantity === undefined) {
     throw new Error("Kullanici, stok, miktar ve musteri bilgisi zorunlu.");
   }
-  const response = await fetch(`${API_BASE_URL}/stock/stocks/${encodeURIComponent(stockId)}/consume`, {
+  const response = await apiFetch(`/stock/stocks/${encodeURIComponent(stockId)}/consume`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

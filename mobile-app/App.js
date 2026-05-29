@@ -21,6 +21,7 @@ import ProfitSummaryScreen from "./src/screens/ProfitSummaryScreen";
 import FixedIncomeExpenseScreen from "./src/screens/FixedIncomeExpenseScreen";
 import CustomersScreen from "./src/screens/CustomersScreen";
 import ProfileScreen from "./src/screens/ProfileScreen";
+import AddSharedUserScreen from "./src/screens/AddSharedUserScreen";
 import EarningsSummaryScreen from "./src/screens/EarningsSummaryScreen";
 import {
   loginUser,
@@ -29,8 +30,15 @@ import {
   verifyRegistrationCode,
   sendForgotPasswordCode,
   verifyPasswordResetCode,
-  completePasswordReset
+  completePasswordReset,
+  resolveWorkspaceUserId
 } from "./src/services/authService";
+import {
+  loadAuthSession,
+  saveAuthSession,
+  clearAuthSession
+} from "./src/services/authSession";
+import { setAuthToken } from "./src/services/apiClient";
 import { COLORS } from "./src/constants/colors";
 import { API_BASE_URL } from "./src/constants/config";
 
@@ -67,8 +75,10 @@ export default function App() {
   const [stockOpsFocusNonce, setStockOpsFocusNonce] = useState(0);
   const [myStocksFocusNonce, setMyStocksFocusNonce] = useState(0);
   const [myProductsFocusNonce, setMyProductsFocusNonce] = useState(0);
+  const [loggedInUserId, setLoggedInUserId] = useState(null);
   const [currentUserId, setCurrentUserId] = useState(null);
   const [loginData, setLoginData] = useState({ email: "", password: "" });
+  const [keepLoggedIn, setKeepLoggedIn] = useState(true);
   const [registerForm, setRegisterForm] = useState(emptyForm);
   const [verificationCode, setVerificationCode] = useState("");
   const [registerCodeHint, setRegisterCodeHint] = useState("");
@@ -93,7 +103,29 @@ export default function App() {
         }
         const stored = await AsyncStorage.getItem(ONBOARDING_STORAGE_KEY);
         if (!alive) return;
-        setBootstrapPhase(stored === "1" ? "ready" : "onboarding");
+
+        if (stored !== "1") {
+          setBootstrapPhase("onboarding");
+          return;
+        }
+
+        const session = await loadAuthSession();
+        if (!alive) return;
+        if (session?.userId) {
+          setLoggedInUserId(session.userId);
+          if (session.token) setAuthToken(session.token);
+          const workspaceUserId = await resolveWorkspaceUserId(session.userId);
+          if (!alive) return;
+          setCurrentUserId(workspaceUserId);
+          setLoginData((prev) => ({
+            ...prev,
+            email: session.email || prev.email,
+            password: ""
+          }));
+          setKeepLoggedIn(true);
+          setScreen("home");
+        }
+        setBootstrapPhase("ready");
       } catch {
         if (!alive) return;
         setBootstrapPhase("onboarding");
@@ -128,7 +160,21 @@ export default function App() {
       setLoading(true);
       setLoginMessage("");
       const loginResult = await loginUser(loginData);
-      setCurrentUserId(loginResult.user_id || null);
+      const userId = loginResult.user_id || null;
+      const token = loginResult.token || "";
+      const emailNorm = String(email || "").trim();
+      setAuthToken(token);
+      setLoggedInUserId(userId);
+      const workspaceUserId = await resolveWorkspaceUserId(userId);
+      setCurrentUserId(workspaceUserId);
+      setLoginData((prev) => ({ ...prev, email: emailNorm, password: "" }));
+      await saveAuthSession({
+        userId,
+        email: loginResult.email || emailNorm,
+        token,
+        activeAccountUserId: workspaceUserId,
+        rememberMe: keepLoggedIn
+      });
       setScreen("home");
     } catch (error) {
       setLoginMessage(error.message || "Giris yapilamadi.");
@@ -263,8 +309,12 @@ export default function App() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await clearAuthSession();
+    setAuthToken(null);
     setLoginData({ email: "", password: "" });
+    setKeepLoggedIn(true);
+    setLoggedInUserId(null);
     setCurrentUserId(null);
     setLoginMessage("");
     setAppPage("home");
@@ -303,10 +353,15 @@ export default function App() {
   }
 
   if (screen === "home") {
+    const isBusinessOwner =
+      loggedInUserId && currentUserId && String(loggedInUserId) === String(currentUserId);
+
     return (
       <SidebarLayout
         activeKey={appPage}
+        showEmployeeManagement={isBusinessOwner}
         onSelect={(key) => {
+          if (key === "add-shared-user" && !isBusinessOwner) return;
           if (key === "logout") {
             handleLogout();
             return;
@@ -446,10 +501,14 @@ export default function App() {
             onTransactionsMutated={() => setTransactionsRefreshNonce((n) => n + 1)}
           />
         )}
+        {appPage === "add-shared-user" && isBusinessOwner && (
+          <AddSharedUserScreen ownerUserId={loggedInUserId} />
+        )}
         {appPage === "profile" && (
           <ProfileScreen
             email={loginData.email}
-            userId={currentUserId}
+            userId={loggedInUserId}
+            isBusinessOwner={isBusinessOwner}
             onLogout={handleLogout}
           />
         )}
@@ -465,6 +524,8 @@ export default function App() {
           password={loginData.password}
           message={loginMessage}
           loading={loading}
+          keepLoggedIn={keepLoggedIn}
+          onChangeKeepLoggedIn={setKeepLoggedIn}
           onChangeEmail={(value) => setLoginData((prev) => ({ ...prev, email: value }))}
           onChangePassword={(value) => setLoginData((prev) => ({ ...prev, password: value }))}
           onSubmit={onLoginPress}

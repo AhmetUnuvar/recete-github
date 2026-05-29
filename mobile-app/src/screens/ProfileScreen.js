@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -12,14 +12,41 @@ import {
 import { COLORS } from "../constants/colors";
 import PageTitleRow from "../components/PageTitleRow";
 import { HORIZONTAL_PADDING } from "../constants/layout";
-import { changePassword } from "../services/authService";
+import { changePassword, getMe } from "../services/authService";
 
-export default function ProfileScreen({ email, userId, onLogout }) {
+export default function ProfileScreen({ email, userId, onLogout, isBusinessOwner = true }) {
   const safeEmail = String(email || "").trim();
+  const [referenceCode, setReferenceCode] = useState("");
+  const [profileLoading, setProfileLoading] = useState(true);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [savingPassword, setSavingPassword] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!userId) {
+        setReferenceCode("");
+        setProfileLoading(false);
+        return;
+      }
+      try {
+        setProfileLoading(true);
+        const me = await getMe();
+        if (!alive) return;
+        setReferenceCode(String(me?.reference_code || "").trim());
+      } catch {
+        if (!alive) return;
+        setReferenceCode("");
+      } finally {
+        if (alive) setProfileLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [userId]);
 
   const handleChangePassword = async () => {
     if (!userId) {
@@ -69,6 +96,28 @@ export default function ProfileScreen({ email, userId, onLogout }) {
       <View style={styles.infoBox}>
         <Text style={styles.infoText}>{safeEmail || "-"}</Text>
       </View>
+
+      <Text style={styles.label}>Referans kodunuz</Text>
+      <View style={styles.infoBox}>
+        {profileLoading ? (
+          <ActivityIndicator color={COLORS.primary} />
+        ) : (
+          <Text style={styles.referenceCodeText} selectable>
+            {referenceCode || "-"}
+          </Text>
+        )}
+      </View>
+      {isBusinessOwner ? (
+        <Text style={styles.hintMuted}>
+          Bu kodu baska bir isletme sahibine vererek o kisi sizin verilerinize erisebilir. Ya da Calisan Ekle
+          ekranindan calisan referans kodunu girerek calisaninizi ekleyin.
+        </Text>
+      ) : (
+        <Text style={styles.hintMuted}>
+          Bu kodu isletme sahibine verin. Sahip sizi "Calisan Ekle" ekraninda bu kodu girerek ekleyecektir;
+          giris yaptiginizda otomatik olarak isletme verilerini goreceksiniz.
+        </Text>
+      )}
 
       <Text style={styles.sectionTitle}>Sifre guncelle</Text>
       <Text style={styles.hintMuted}>Mevcut sifrenizi dogrulayarak yeni sifre belirleyebilirsiniz.</Text>
@@ -183,6 +232,12 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
     fontSize: 15,
     fontWeight: "600"
+  },
+  referenceCodeText: {
+    color: COLORS.primary,
+    fontSize: 13,
+    fontWeight: "600",
+    fontFamily: "monospace"
   },
   input: {
     borderWidth: 1,

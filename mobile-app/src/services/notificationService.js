@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "../constants/config";
+import { apiFetch } from "./apiClient";
 
 const TARGET_PAGE_HOME = "ana sayfa";
 const TARGET_PAGE_ADD_PRODUCT = "urun ekle";
@@ -27,7 +28,7 @@ export const getPendingNotificationsForPage = async ({ userId, targetPage = TARG
     user_id: userId,
     target_page: targetPage
   });
-  const response = await fetch(`${API_BASE_URL}/notifications/pending?${q.toString()}`);
+  const response = await apiFetch(`/notifications/pending?${q.toString()}`);
   const data = await parseBody(response);
   if (!response.ok) {
     throw new Error(data.message || "Bildirimler alinamadi.");
@@ -39,7 +40,7 @@ export const dismissNotification = async ({ userId, notificationId }) => {
   if (!userId || !notificationId) {
     throw new Error("Eksik parametre.");
   }
-  const response = await fetch(`${API_BASE_URL}/notifications/dismiss`, {
+  const response = await apiFetch(`/notifications/dismiss`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ user_id: userId, notification_id: notificationId })

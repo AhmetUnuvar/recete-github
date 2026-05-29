@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   ScrollView,
+  RefreshControl,
   TextInput,
   TouchableOpacity,
   Modal,
@@ -155,6 +156,7 @@ export default function MyStocksScreen({ userId, stocksRefreshNonce = 0, myStock
   const [openPicker, setOpenPicker] = useState(null);
   const [stocks, setStocks] = useState([]);
   const [loadingStocks, setLoadingStocks] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [stocksMessage, setStocksMessage] = useState("");
   const [categoryPickerSearch, setCategoryPickerSearch] = useState("");
   const [customStartDate, setCustomStartDate] = useState("");
@@ -207,6 +209,12 @@ export default function MyStocksScreen({ userId, stocksRefreshNonce = 0, myStock
   useEffect(() => {
     loadStocks();
   }, [userId, stocksRefreshNonce]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadStocks();
+    setRefreshing(false);
+  }, [userId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -649,7 +657,13 @@ export default function MyStocksScreen({ userId, stocksRefreshNonce = 0, myStock
 
   return (
     <>
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />
+      }
+    >
       <View style={styles.pageTitleRow}>
         <Text style={[styles.title, styles.titleInHeader]} numberOfLines={2}>
           Stoklarim

@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "../constants/config";
+import { apiFetch } from "./apiClient";
 
 const parseResponseBody = async (response) => {
   const text = await response.text();
@@ -14,7 +15,7 @@ export const createFixedRecord = async ({ userId, fixedName, isFixedIncome, amou
   if (!userId) {
     throw new Error("Kullanici bilgisi bulunamadi. Lutfen tekrar giris yapin.");
   }
-  const response = await fetch(`${API_BASE_URL}/finance/fixed`, {
+  const response = await apiFetch(`/finance/fixed`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -36,8 +37,8 @@ export const getFixedRecords = async (userId) => {
   if (!userId) {
     throw new Error("Kullanici bilgisi bulunamadi. Lutfen tekrar giris yapin.");
   }
-  const response = await fetch(
-    `${API_BASE_URL}/finance/fixed?user_id=${encodeURIComponent(userId)}`
+  const response = await apiFetch(
+    `/finance/fixed?user_id=${encodeURIComponent(userId)}`
   );
   const data = await parseResponseBody(response);
   if (!response.ok) {
@@ -50,7 +51,7 @@ export const updateFixedRecord = async ({ userId, fixedId, fixedName, amount, is
   if (!userId || !fixedId) {
     throw new Error("Kullanici veya kayit bilgisi eksik.");
   }
-  const response = await fetch(`${API_BASE_URL}/finance/fixed/${encodeURIComponent(fixedId)}`, {
+  const response = await apiFetch(`/finance/fixed/${encodeURIComponent(fixedId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -71,7 +72,7 @@ export const deleteFixedRecord = async ({ userId, fixedId }) => {
   if (!userId || !fixedId) {
     throw new Error("Kullanici veya kayit bilgisi eksik.");
   }
-  const response = await fetch(`${API_BASE_URL}/finance/fixed/${encodeURIComponent(fixedId)}`, {
+  const response = await apiFetch(`/finance/fixed/${encodeURIComponent(fixedId)}`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ user_id: userId })

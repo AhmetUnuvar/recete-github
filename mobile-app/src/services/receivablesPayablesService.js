@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "../constants/config";
+import { apiFetch } from "./apiClient";
 
 const parseResponseBody = async (response) => {
   const text = await response.text();
@@ -22,8 +23,8 @@ export const getBalances = async (userId) => {
   if (!userId) {
     throw new Error("Kullanici bilgisi bulunamadi. Lutfen tekrar giris yapin.");
   }
-  const response = await fetch(
-    `${API_BASE_URL}/receivables-payables/balances?user_id=${encodeURIComponent(userId)}`
+  const response = await apiFetch(
+    `/receivables-payables/balances?user_id=${encodeURIComponent(userId)}`
   );
   const data = await parseResponseBody(response);
   throwUnlessOk(response, data, "Borclar alacaklar listelenemedi.");
@@ -37,8 +38,8 @@ export const settleBalance = async ({ userId, balanceId, amount }) => {
   if (amount === undefined || amount === null || amount === "") {
     throw new Error("Tutar zorunlu.");
   }
-  const response = await fetch(
-    `${API_BASE_URL}/receivables-payables/balances/${encodeURIComponent(balanceId)}/settle`,
+  const response = await apiFetch(
+    `/receivables-payables/balances/${encodeURIComponent(balanceId)}/settle`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -55,8 +56,8 @@ export const updateBalancePaymentDate = async ({ userId, balanceId, payment_date
     throw new Error("Kullanici veya kayit bilgisi eksik.");
   }
   const body = { user_id: userId, payment_date };
-  const response = await fetch(
-    `${API_BASE_URL}/receivables-payables/balances/${encodeURIComponent(balanceId)}/payment-date`,
+  const response = await apiFetch(
+    `/receivables-payables/balances/${encodeURIComponent(balanceId)}/payment-date`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -83,8 +84,8 @@ export const patchBalance = async ({ userId, balanceId, remaining_amount, paymen
   if (Object.keys(body).length <= 1) {
     throw new Error("Guncellenecek alan yok.");
   }
-  const response = await fetch(
-    `${API_BASE_URL}/receivables-payables/balances/${encodeURIComponent(balanceId)}`,
+  const response = await apiFetch(
+    `/receivables-payables/balances/${encodeURIComponent(balanceId)}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

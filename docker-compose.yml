@@ -271,6 +271,7 @@ services:
     container_name: api-gateway
     environment:
       PORT: 4000
+      JWT_SECRET: super-secret-key
       AUTH_SERVICE_URL: http://auth-service:4001
       MAIL_SERVICE_URL: http://mail-service:4011
       STOCK_SERVICE_URL: http://stock-service:4002
@@ -282,18 +283,32 @@ services:
       TABLE_MAKER_SERVICE_URL: http://table-maker-service:4008
       NOTIFICATION_SERVICE_URL: http://notification-service:4009
       RECEIVABLES_PAYABLES_SERVICE_URL: http://receivables-payables-service:4010
+      REDIS_URL: redis://redis:6379
     depends_on:
-      - auth-service
-      - mail-service
-      - stock-service
-      - finance-service
-      - calc-service
-      - product-service
-      - transactions-service
-      - customer-service
-      - table-maker-service
-      - notification-service
-      - receivables-payables-service
+      redis:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+      mail-service:
+        condition: service_started
+      stock-service:
+        condition: service_started
+      finance-service:
+        condition: service_started
+      calc-service:
+        condition: service_started
+      product-service:
+        condition: service_started
+      transactions-service:
+        condition: service_started
+      customer-service:
+        condition: service_started
+      table-maker-service:
+        condition: service_started
+      notification-service:
+        condition: service_started
+      receivables-payables-service:
+        condition: service_started
     ports:
       - "4000:4000"
 

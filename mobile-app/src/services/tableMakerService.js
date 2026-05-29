@@ -17,7 +17,7 @@ export const exportAndShareTable = async ({ title, columns, rows, format, extras
   const timer = setTimeout(() => controller.abort(), 15000);
   let response;
   try {
-    response = await fetch(`${API_BASE_URL}/table-maker/table/export`, {
+    response = await apiFetch(`/table-maker/table/export`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title, columns, rows, format, extras: extras ?? [] }),

@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "../constants/config";
+import { apiFetch } from "./apiClient";
 
 const parseResponseBody = async (response) => {
   const text = await response.text();
@@ -18,7 +19,7 @@ const formatErrorMessage = (data, fallback) => {
 };
 
 export const getCities = async () => {
-  const response = await fetch(`${API_BASE_URL}/customer/cities`);
+  const response = await apiFetch(`/customer/cities`);
   const data = await parseResponseBody(response);
   if (!response.ok) {
     throw new Error(formatErrorMessage(data, "Şehirler getirilemedi."));
@@ -35,8 +36,8 @@ export const getCustomers = async (userId, options = {}) => {
   if (typeof options.isDone === "boolean") {
     params.set("is_done", String(options.isDone));
   }
-  const response = await fetch(
-    `${API_BASE_URL}/customer/customers?${params.toString()}`
+  const response = await apiFetch(
+    `/customer/customers?${params.toString()}`
   );
   const data = await parseResponseBody(response);
   if (!response.ok) {
@@ -49,8 +50,8 @@ export const setCustomerDoneStatus = async ({ userId, customerId, isDone }) => {
   if (!userId || !customerId || typeof isDone !== "boolean") {
     throw new Error("Kullanici, musteri ve durum bilgisi zorunlu.");
   }
-  const response = await fetch(
-    `${API_BASE_URL}/customer/customers/${encodeURIComponent(customerId)}/done`,
+  const response = await apiFetch(
+    `/customer/customers/${encodeURIComponent(customerId)}/done`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -71,7 +72,7 @@ export const createCustomer = async (userId, payload) => {
   if (!userId) {
     throw new Error("Kullanici bilgisi bulunamadi. Lutfen tekrar giris yapin.");
   }
-  const response = await fetch(`${API_BASE_URL}/customer/customers`, {
+  const response = await apiFetch(`/customer/customers`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -100,7 +101,7 @@ export const updateCustomer = async (userId, customerId, payload) => {
   if (!customerId) {
     throw new Error("Musteri id bulunamadi.");
   }
-  const response = await fetch(`${API_BASE_URL}/customer/customers/${encodeURIComponent(customerId)}`, {
+  const response = await apiFetch(`/customer/customers/${encodeURIComponent(customerId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -129,7 +130,7 @@ export const deleteCustomer = async (userId, customerId) => {
   if (!customerId) {
     throw new Error("Musteri id bulunamadi.");
   }
-  const response = await fetch(`${API_BASE_URL}/customer/customers/${encodeURIComponent(customerId)}`, {
+  const response = await apiFetch(`/customer/customers/${encodeURIComponent(customerId)}`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ user_id: userId })

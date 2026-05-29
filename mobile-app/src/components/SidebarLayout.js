@@ -4,7 +4,12 @@ import { COLORS } from "../constants/colors";
 import { HORIZONTAL_PADDING, SIDEBAR_WIDTH } from "../constants/layout";
 import { AppNavContext } from "../context/AppNavContext";
 
-export default function SidebarLayout({ activeKey, onSelect, children }) {
+export default function SidebarLayout({
+  activeKey,
+  onSelect,
+  children,
+  showEmployeeManagement = true
+}) {
   const navValue = useMemo(
     () => ({
       goHome: () => {
@@ -19,7 +24,7 @@ export default function SidebarLayout({ activeKey, onSelect, children }) {
   const [isVisible, setIsVisible] = useState(false);
   const slideAnim = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
-  const menuItems = [
+  const allMenuItems = [
     { key: "home", label: "Ana Sayfa" },
     { key: "customers", label: "Müşteriler" },
     { key: "fixed-income-expense", label: "Sabit Gelir Gider Ekle" },
@@ -33,9 +38,11 @@ export default function SidebarLayout({ activeKey, onSelect, children }) {
     { key: "my-retail-products", label: "Perakende Ürünlerim" },
     { key: "debts-receivables", label: "Borçlar Alacaklar" },
     { key: "earnings-summary", label: "Kazanç Özeti" },
+    { key: "add-shared-user", label: "Çalışan Ekle", ownerOnly: true },
     { key: "profile", label: "Profil" },
     { key: "logout", label: "Çıkış Yap" }
   ];
+  const menuItems = allMenuItems.filter((item) => !item.ownerOnly || showEmployeeManagement);
 
   useEffect(() => {
     if (isOpen) {

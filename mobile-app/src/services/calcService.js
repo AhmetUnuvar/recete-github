@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "../constants/config";
+import { apiFetch } from "./apiClient";
 
 const parseBody = async (response) => {
   const text = await response.text();
@@ -20,7 +21,7 @@ export const previewRecipeCost = async (materialLines) => {
     quantity_unit: m.unit
   }));
 
-  const response = await fetch(`${API_BASE_URL}/calc/recipe-cost`, {
+  const response = await apiFetch(`/calc/recipe-cost`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ lines })
@@ -33,7 +34,7 @@ export const previewRecipeCost = async (materialLines) => {
 };
 
 export const getKdvRates = async () => {
-  const response = await fetch(`${API_BASE_URL}/calc/kdv-rates`);
+  const response = await apiFetch(`/calc/kdv-rates`);
   const data = await parseBody(response);
   if (!response.ok) {
     throw new Error(data.message || "KDV oranlari getirilemedi.");
